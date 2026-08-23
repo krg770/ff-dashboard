@@ -229,6 +229,62 @@ cools off, but nothing currently flags that.
   field would cost additional Claude API calls — a one-time cost to
   weigh when this gets picked up.
 
+## Latest News grouped by player (2026-08-23)
+
+The News table was a flat, quote-by-quote list — hard to tell at a glance
+when multiple shows covered the same player. Restructured to group by
+player (`groupNewsByPlayer()` in `static/index.html`), each group headed
+by a `BuzzBadge` (distinct podcast count, colored by net sentiment) with
+every individual quote listed underneath, unabbreviated. Sorted by
+podcast count first (highest-consensus players surface at the top), then
+recency. Unmatched mentions get their own group at the end. This makes
+the list longer/scrollier by design — the goal right now is surfacing
+every piece of information, not compressing it; visual/UX trimming is a
+deliberately later pass.
+
+Verified live: 45 player groups currently, all "1 show" — expected, since
+only 2 of the 4 podcasts have processed episodes so far and haven't
+covered any of the same players yet. Will show real "N shows" badges once
+Fantasy Footballers and Locked On finish their pilot episodes and/or more
+episodes get processed.
+
+## Source reliability tracking (future initiative, scoped 2026-08-23)
+
+Vision: identify which shows break news first vs. which just repeat what
+they hear, and eventually score each podcast by whether their calls
+actually panned out (e.g. "Podcast X said Player A would see a bigger
+role because his teammate was hurt — did Player A's actual output back
+that up?").
+
+**Not started — this is a multi-part system, not a quick add, and it
+inherently can't produce real signal until actual game outcomes exist to
+check predictions against** (i.e. it needs the season to actually play
+out, not just more engineering). Rough shape for when this gets picked
+up:
+
+1. **Event/claim clustering** — the real unlock underneath both halves of
+   this idea. Different shows phrase the same underlying news differently
+   ("Diggs getting more slot snaps" vs. "Commanders leaning on Diggs
+   underneath"), so "who said it first" and "which podcasts agree"
+   both require grouping quotes across podcasts by the underlying claim,
+   not just by player. Likely needs its own Claude call comparing
+   same-player quotes across episodes ("are these about the same
+   event?"), not simple text matching.
+2. **First-mention detection** — once claims are clustered, compare
+   `episodes.published_at` across the cluster to find which podcast said
+   it first vs. which repeated it afterward.
+3. **Outcome linking** — connect a quote's claim (e.g. "primed for a big
+   game," "more targets incoming") to the actual following week's
+   `player_stats` once real season data exists (currently empty — see
+   "Hot/Cold Meter shows empty" above). Needs a definition of "the
+   prediction was right" per claim type, which is inherently a judgment
+   call, not a pure data lookup.
+4. **Per-podcast reliability score** — aggregate outcome-linked claims per
+   podcast over time, weighted for how early they called it.
+
+First practical step whenever this gets picked up: #1 (claim clustering),
+since it's the shared foundation both halves of the idea depend on.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
