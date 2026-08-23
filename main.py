@@ -224,7 +224,6 @@ def get_news():
         LEFT JOIN podcasts pod ON e.podcast_id = pod.id
         WHERE q.content_week = %s
         ORDER BY q.created_at DESC
-        LIMIT 50
         """,
         (week,),
     )
