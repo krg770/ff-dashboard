@@ -248,6 +248,10 @@ covered any of the same players yet. Will show real "N shows" badges once
 Fantasy Footballers and Locked On finish their pilot episodes and/or more
 episodes get processed.
 
+**Player Rankings (ADP)** got the same round-grouping treatment right
+after, for visual consistency with Round Focus — "Round 1" / "Round 2" /
+etc. section headers instead of a plain "Rd" column in a flat table.
+
 ## Source reliability tracking (future initiative, scoped 2026-08-23)
 
 Vision: identify which shows break news first vs. which just repeat what
