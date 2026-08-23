@@ -110,14 +110,42 @@ show's RSS URL is found.
 
 ## Known gaps / next steps
 
-- Dashboard feature next up: "last updated per section" + "NEW" badges.
 - Fuzzy player-name matching still misses some cases — see "Fuzzy matching"
   below for how corrections get added.
 - `fantasy_points_ppr` stat is not being loaded yet.
+- `player_stats` has no timestamp column at all, so the Hot/Cold, Waiver
+  Adds/Avoids, and Trade Buy/Sell widgets can't show a real "last updated"
+  — see "Last updated + NEW badges" below.
 - Production-readiness goal: get the dashboard usable in mock and live
   drafts, including incorporating salary/auction leagues and how breaking
   news should adjust salary value. Not yet scoped — flagged 2026-08-23 as
   the end-of-day target, to be broken into chunks.
+
+## Last updated + NEW badges (2026-08-23)
+
+Each dashboard section header now shows "Updated Xh ago", and individual
+rows get a blue "NEW" badge if their underlying data is less than 24h old
+(`NEW_WINDOW_HOURS` in `static/index.html`).
+
+This only works where the database actually has a real timestamp to point
+to — no section fakes one:
+
+- **Round Focus, Latest News** — use `quotes.created_at`.
+- **Player Rankings** — uses `rankings.fetched_at`.
+- **Injuries** — uses `injuries.fetched_at`.
+- **Hot/Cold Meter, Waiver Adds/Avoids, Trade Buy/Sell** — **no
+  last-updated shown.** `player_stats` has no timestamp column
+  (`id, player_id, season, week, stat_name, stat_value, source`), so
+  there's nothing to point to. Adding one (and setting it in
+  `load_snap_counts.py` / wherever stats get loaded) is a prerequisite if
+  this is wanted here later.
+- **Stream D/ST, Stream K** — skipped for now; the underlying data
+  (`rankings` left-joined against DEF/K players) is mostly empty until
+  matchup-based streaming logic exists anyway.
+
+The `SimpleTable` frontend component takes an optional `timestampKey`
+prop — pass the column name and it shows the header + per-row badges;
+omit it and it renders exactly as before.
 
 ## Fixed issues
 
