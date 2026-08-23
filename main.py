@@ -88,7 +88,7 @@ def get_latest_run():
 
     cur.execute(
         """
-        SELECT q.episode_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence
+        SELECT q.episode_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence, q.fantasy_relevance
         FROM quotes q
         LEFT JOIN players p ON q.player_id = p.id
         WHERE q.episode_id = ANY(%s)
