@@ -383,3 +383,8 @@ one-off INSERTs) is still TBD — pending the user's example set.
   the RB (id 2245), since that's virtually always the one relevant to a
   fantasy dashboard, but it's worth knowing this name is ambiguous if
   weird mismatches show up again.
+- **"sadeek" (quote id 246, unmatched) → Kenyon Sadiq** — Whisper's
+  phonetic spelling of "Sadiq" didn't clear the trigram similarity
+  threshold against the real name. Quote content ("most physically
+  gifted tight ends we've ever seen") also confirms the TE. Added alias,
+  backfilled the quote.
