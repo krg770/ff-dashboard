@@ -71,6 +71,25 @@ hours from 8am–10pm:
   Connecting: Code tab → + New → select Ubuntu → browse to `ff-dashboard`
   (or paste `\\wsl.localhost\Ubuntu\home\krg77\ff-dashboard`).
 
+## Podcast sources & processing status (as of 2026-08-23)
+
+- Only **one** podcast source is configured in the `podcasts` table so far:
+  "Fantasy Football Today" (`rss_url` set, `active = true`). The original
+  goal was 4 shows — the other 3 just need RSS feed URLs added as rows to
+  `podcasts`.
+- **3 episodes** have been fully downloaded, transcribed, and had quotes
+  extracted (`status = 'extracted'`), all from that one show. 2 of the 3
+  are missing a `processed_at` timestamp — they were run through an
+  earlier/manual pass before that tracking was fully wired in.
+- **2,990 episodes** from that same feed are marked `status = 'skipped'`
+  — that's the show's back-catalog (long-running daily show), deliberately
+  excluded rather than a processing failure.
+- The dashboard's Latest News table now shows a **Source** column (podcast
+  name, air date, and processed/downloaded date) per item, added
+  2026-08-23 — previously that info existed in the database
+  (`episodes.published_at` / `processed_at`, `podcasts.name`) but wasn't
+  surfaced anywhere in the UI.
+
 ## Known gaps / next steps
 
 - Dashboard feature next up: "last updated per section" + "NEW" badges.
