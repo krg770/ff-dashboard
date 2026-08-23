@@ -369,6 +369,36 @@ would upgrade "first to cover" from an approximation to something
 trustworthy; real accuracy tracking is blocked on the season actually
 starting.
 
+## Salary tab (2026-08-23)
+
+New "Salary" tab for a 10-team, $200-budget auction league — same
+podcast-buzz data as Round Focus/Rankings, reframed for auction dollars
+instead of ADP rounds alone.
+
+- **No real auction-value data source exists**, so dollar values are
+  derived from ADP: every rostered player (top 16 rounds, same cap as
+  Rankings/Round Focus) gets a $1 floor, and the rest of the
+  `LEAGUE_TEAMS * LEAGUE_BUDGET` pool (2000) splits by ADP rank using
+  exponential decay, `weight = e^(-0.03 * (rank-1))`.
+  - **First attempt was linear on raw ADP value** (weight = max_adp -
+    player_adp) — rejected after testing: it compressed the entire first
+    round to ~$23 flat, since ADP 1.6 and ADP 9.9 are numerically close
+    relative to the full ADP range. Real auction value drops off much
+    faster than that near the top.
+  - Tuned `k=0.03` empirically so rank 1 lands ~$55 and rank 60 ~$10,
+    checked against realistic $200-league auction behavior (elite
+    RB1/WR1 in the $50-65 range). Total pool comes out to ~$1990-1994
+    after rounding, close enough to the nominal $2000 to not need forced
+    reconciliation.
+- **Pay meter** (`pay_up` / `pay_down` / `pay_average`) reuses the exact
+  same distinct-podcast buzz signal as the Hot/Cold Meter's Buzz column
+  (net rising → pay up, net falling → pay down, tied/no buzz → pay
+  average) - no new logic, just relabeled for the auction framing.
+- On-page banner (not just docs) makes clear these are derived estimates,
+  not real published prices.
+- `LEAGUE_TEAMS`, `LEAGUE_BUDGET`, `ROSTER_SPOTS`, `MIN_BID` are constants
+  in `main.py` - update those if the league's actual settings differ.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
