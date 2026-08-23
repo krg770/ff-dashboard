@@ -168,9 +168,13 @@ def get_news():
     cur.execute(
         """
         SELECT p.full_name, p.team, p.position, q.quote_text, q.speaker,
-               q.tags, q.sentiment, q.fantasy_relevance, q.match_confidence
+               q.tags, q.sentiment, q.fantasy_relevance, q.match_confidence,
+               pod.name AS source_podcast, e.title AS source_episode,
+               e.published_at AS source_published_at, e.processed_at AS source_downloaded_at
         FROM quotes q
         LEFT JOIN players p ON q.player_id = p.id
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
         WHERE q.content_week = %s
         ORDER BY q.created_at DESC
         LIMIT 50

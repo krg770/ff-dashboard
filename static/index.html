@@ -94,6 +94,8 @@
   .tag.tag-injury_beneficiary { background: #1a3a2a; color: #4ade80; }
   .confidence-low { color: #fbbf24; font-size: 10px; }
   .fantasy-relevance { color: #6b7280; font-size: 11px; margin-top: 2px; }
+  .source-cell { font-size: 11px; color: #9099a8; white-space: nowrap; }
+  .source-date { color: #6b7280; }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -243,7 +245,7 @@ function News() {
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text="No podcast quotes this week yet" /> :
       <table>
-        <thead><tr><th>Player</th><th>Quote</th><th>Tags</th></tr></thead>
+        <thead><tr><th>Player</th><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
         <tbody>
           {data.map((q, i) => (
             <tr key={i}>
@@ -256,6 +258,11 @@ function News() {
                 {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
               </td>
               <td><Tags tags={q.tags} /></td>
+              <td className="source-cell">
+                {q.source_podcast && <div>{q.source_podcast}</div>}
+                {q.source_published_at && <div className="source-date">Aired {new Date(q.source_published_at).toLocaleDateString()}</div>}
+                {q.source_downloaded_at && <div className="source-date">Processed {new Date(q.source_downloaded_at).toLocaleDateString()}</div>}
+              </td>
             </tr>
           ))}
         </tbody>
