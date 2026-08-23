@@ -116,6 +116,11 @@ show's RSS URL is found.
 - `player_stats` has no timestamp column at all, so the Hot/Cold, Waiver
   Adds/Avoids, and Trade Buy/Sell widgets can't show a real "last updated"
   — see "Last updated + NEW badges" below.
+- **Hot/Cold Meter shows empty — confirmed not a bug.** Ran
+  `load_snap_counts.py` (2026-08-23) to check; nflverse's 2026 snap-count
+  source 404s outright — the data doesn't exist upstream yet since real
+  Week 1 hasn't happened. Will populate automatically once nflverse
+  publishes it; no dashboard fix needed.
 - Production-readiness goal: get the dashboard usable in mock and live
   drafts, including incorporating salary/auction leagues and how breaking
   news should adjust salary value. Not yet scoped — flagged 2026-08-23 as
@@ -173,6 +178,56 @@ read is a real signal. Implemented two places:
   consensus. (Note: within one run this counts quotes, not distinct
   podcasts, since a single run is often one show's episode(s) — the
   distinct-podcast weighting matters more at the weekly Hot/Cold level.)
+
+## Pipeline status widget (2026-08-23)
+
+Answers "is the poller running, and when will it finish?" live on the
+dashboard, refreshing every 15s:
+
+- **New `pipeline_status` table** (singleton row, `id = 1`) —
+  `worker.py` updates it at each stage transition (`downloading` →
+  `transcribing` → `extracting`) via a small `update_pipeline_status()`
+  helper; `poller.py` updates `last_poll_at` / `last_poll_new_count`.
+- **ETA** is a rolling average: `avg_seconds_per_episode` = elapsed time
+  in the current run ÷ episodes completed so far, × episodes remaining.
+  Rough by design (no per-episode duration estimate ahead of time, e.g.
+  from audio length) but self-corrects as a run progresses.
+- **`/api/pipeline_status`** also reports `episodes_queued_total` (all
+  `status = 'new'` episodes, not just the current run) so the idle state
+  shows whether anything is waiting.
+- **Confirmed: processing is strictly one episode at a time.**
+  `worker.py` loads a single Whisper model and runs a plain sequential
+  loop (download → transcribe → extract → insert) to completion before
+  starting the next episode. No parallelism. The cron job's `flock` also
+  prevents two pipeline runs overlapping.
+- **Caveat:** the pilot transcription run kicked off earlier today started
+  under the *old* `worker.py` (before this tracking existed), so it won't
+  report live status — only runs started after this change will show up
+  as "running." Confirmed via a direct API check that the idle state
+  itself renders correctly ("Pipeline idle — 2 episode(s) queued").
+
+## Injury-linkage tracking (deferred, scoped 2026-08-23)
+
+Raised: when a player is out injured and a teammate benefits (more
+targets/snaps), that's currently captured only as prose in
+`fantasy_relevance` — there's no structured link saying *which* teammate
+is hurt. That means we also can't detect the inverse: when the injured
+player returns, the beneficiary's role (and fantasy value) predictably
+cools off, but nothing currently flags that.
+
+**Deferred, not built yet** — needs its own chunk. Scope as discussed:
+
+- A `related_player_id` (or similar) column on `quotes`, populated by the
+  extraction step when tagging `injury_beneficiary`, pointing at the
+  specific injured teammate rather than just naming them in prose.
+- Extraction prompt changes to identify that teammate by name/id.
+- Logic to detect "return from injury" events (e.g. an `injury` tag with
+  rising/neutral sentiment about playing status) and cross-reference
+  existing `injury_beneficiary` rows pointing at that player, to surface
+  a "cooling down" signal for whoever benefited.
+- Re-running extraction on already-processed episodes to backfill the new
+  field would cost additional Claude API calls — a one-time cost to
+  weigh when this gets picked up.
 
 ## Fixed issues
 
@@ -241,3 +296,20 @@ one-off INSERTs) is still TBD — pending the user's example set.
   mangled "Schefter" (Adam Schefter, the reporter — not a player), so
   there's no reliable anchor to guess who "Wilholms" actually is. Waiting
   on the user to identify the player before adding a correction.
+- **"Judkins and Scattaboo" (quote id 208, unmatched) → Quinshon Judkins**
+  — the extraction had combined two players' names into one
+  `raw_player_mention`, which no alias can fix (there's no single player
+  called "Judkins and Scattaboo"). Backfilled id 208 to Quinshon Judkins
+  (id 2245) directly; a sibling row (id 209, "Scattaboo" alone) already
+  resolved correctly to Cam Skattebo earlier today. **Root-caused and
+  fixed the actual bug**, not just this instance: added an explicit rule
+  to `extraction_prompt.md` requiring one `raw_player_mention` per player
+  — a quote naming multiple players now becomes multiple array items
+  instead of one combined, unmatchable mention. Also discovered while
+  investigating: there are **two different real NFL players both named
+  "Quinshon Judkins"** in the roster (RB, Cleveland vs. DL, Green Bay —
+  different `gsis_id`s, looks like an nflverse data quirk rather than
+  something on our end). Added an explicit alias for bare "Judkins" →
+  the RB (id 2245), since that's virtually always the one relevant to a
+  fantasy dashboard, but it's worth knowing this name is ambiguous if
+  weird mismatches show up again.
