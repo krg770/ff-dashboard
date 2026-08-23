@@ -168,15 +168,17 @@ def get_rankings():
 
 
 @app.get("/api/round_focus")
-def get_round_focus(round: int = Query(..., ge=1)):
+def get_round_focus(round: int | None = Query(None, ge=1)):
     conn = get_conn()
     cur = conn.cursor()
     week = current_content_week()
+    round_filter = "AND CEIL(r.value / 10) = %s" if round is not None else "AND CEIL(r.value / 10) <= 16"
+    params = [SEASON, week] + ([round] if round is not None else [])
     cur.execute(
-        """
+        f"""
         SELECT
             p.id AS player_id, p.full_name, p.team, p.position,
-            r.value AS adp,
+            r.value AS adp, CEIL(r.value / 10) AS draft_round,
             COALESCE(
                 json_agg(
                     json_build_object(
@@ -192,11 +194,11 @@ def get_round_focus(round: int = Query(..., ge=1)):
         FROM players p
         JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
         LEFT JOIN quotes q ON q.player_id = p.id AND q.content_week = %s
-        WHERE CEIL(r.value / 10) = %s
+        WHERE r.value IS NOT NULL {round_filter}
         GROUP BY p.id, p.full_name, p.team, p.position, r.value
         ORDER BY r.value ASC
         """,
-        (SEASON, week, round),
+        params,
     )
     result = dict_rows(cur)
     cur.close()

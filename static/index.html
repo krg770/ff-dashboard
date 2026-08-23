@@ -97,7 +97,6 @@
   .source-cell { font-size: 11px; color: #9099a8; white-space: nowrap; }
   .source-date { color: #6b7280; }
   .section-updated { font-size: 10px; color: #6b7280; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; }
-  .section-header-right { display: flex; align-items: center; gap: 8px; }
   .new-badge { display: inline-block; background: #1e3a5f; color: #60a5fa; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 4px; letter-spacing: 0.5px; vertical-align: middle; }
   .buzz-callout { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
   .buzz-callout-item { font-size: 12px; }
@@ -329,50 +328,75 @@ function PipelineStatusBar() {
 }
 
 function RoundFocus() {
-  const [round, setRound] = useState(5);
-  const [data, loading] = useApi(`/api/round_focus?round=${round}`, [round]);
+  const [data, loading] = useApi("/api/round_focus", []);
+  const [expanded, setExpanded] = useState(() => new Set([1]));
   const updated = latestTimestamp(
     (data || []).flatMap(p => p.weekly_quotes || []),
     [q => q.created_at]
   );
+  const rounds = React.useMemo(() => {
+    const map = new Map();
+    for (const p of (data || [])) {
+      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
+      map.get(p.draft_round).push(p);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+  }, [data]);
+
+  const toggleRound = (round) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(round)) next.delete(round); else next.add(round);
+      return next;
+    });
+  };
 
   return (
     <section className="grid-full">
       <h2>
         <span>Round Focus</span>
-        <span className="section-header-right">
-          <SectionUpdated timestamp={updated} />
-          <select value={round} onChange={e => setRound(Number(e.target.value))}>
-            {Array.from({length: 16}, (_, i) => i + 1).map(r => (
-              <option key={r} value={r}>Round {r}</option>
-            ))}
-          </select>
-        </span>
+        <SectionUpdated timestamp={updated} />
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
-       (!data || data.length === 0) ? <EmptyState text="No players in this round" /> :
-      <table>
-        <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Podcast Buzz This Week</th></tr></thead>
-        <tbody>
-          {data.map((p, i) => (
-            <tr key={i}>
-              <td>{p.full_name}</td>
-              <td>{p.team}</td>
-              <td>{p.position}</td>
-              <td>{p.adp}</td>
-              <td className="quote-cell">
-                {p.weekly_quotes && p.weekly_quotes.length > 0 ? (
-                  p.weekly_quotes.map((q, j) => (
-                    <div key={j} style={{marginBottom: 4}}>
-                      <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote}
-                    </div>
-                  ))
-                ) : <span style={{color: "#6b7280"}}>No mentions this week</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>}
+       (!data || data.length === 0) ? <EmptyState text="No players yet" /> :
+      <div>
+        {rounds.map(([round, players]) => {
+          const isOpen = expanded.has(round);
+          return (
+          <div className="news-group" key={round}>
+            <div className="news-group-header clickable" onClick={() => toggleRound(round)}>
+              <span className="news-group-player">
+                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Round {round}
+              </span>
+              <span className="round-count">{players.length} players</span>
+            </div>
+            {isOpen &&
+            <table>
+              <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Podcast Buzz This Week</th></tr></thead>
+              <tbody>
+                {players.map((p, i) => (
+                  <tr key={i}>
+                    <td>{p.full_name}</td>
+                    <td>{p.team}</td>
+                    <td>{p.position}</td>
+                    <td>{p.adp}</td>
+                    <td className="quote-cell">
+                      {p.weekly_quotes && p.weekly_quotes.length > 0 ? (
+                        p.weekly_quotes.map((q, j) => (
+                          <div key={j} style={{marginBottom: 4}}>
+                            <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote}
+                          </div>
+                        ))
+                      ) : <span style={{color: "#6b7280"}}>No mentions this week</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>}
+          </div>
+          );
+        })}
+      </div>}
     </section>
   );
 }
