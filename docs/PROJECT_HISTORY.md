@@ -299,6 +299,54 @@ up:
 First practical step whenever this gets picked up: #1 (claim clustering),
 since it's the shared foundation both halves of the idea depend on.
 
+## Dev status panel (2026-08-23)
+
+A "▸ Dev" toggle in the header (right side) reveals a debug panel via
+`/api/dev_status`: server time, cron schedule (`0 8-22/2 * * *`,
+hardcoded as `CRON_HOURS` in `main.py` — **kept in sync manually, not
+read from crontab directly**, so if the schedule changes in cron this
+constant needs updating too), computed next-scheduled-run time, whether
+the pipeline is actively running, last poll result, last run finish
+time, error episode count, and a per-podcast breakdown of episode counts
+by status. Meant for exactly this kind of question: "did tomorrow's runs
+actually happen" — check it after a scheduled cron slot passes.
+
+## Source-reliability tracking, first pass (2026-08-23)
+
+Picked back up per explicit request not to let this drop. Real
+challenges going in (stated to the user before building):
+
+1. Event clustering is unsolved — same player mentioned by 2 shows isn't
+   proof it's the same underlying news story.
+2. Outcome tracking needs real season stats, which don't exist yet
+   (`player_stats` is empty - confirmed via the nflverse 404 earlier).
+3. "The prediction was right" is a judgment call, not a data lookup.
+4. Sample size is tiny right now (4 podcasts, ~1 week) - not enough to
+   mean anything yet even once the mechanics exist.
+
+**Built as an "Reliability 🧪" tab**, clearly marked experimental with a
+persistent on-page banner (not just in docs) warning not to use it for
+decisions:
+
+- **"First to Cover This Week" — real, computed data.**
+  `/api/reliability`: for players mentioned by 2+ distinct podcasts this
+  week, finds which podcast's episode `published_at` is earliest, tallies
+  wins per podcast, and lists the detail (player, who was first, when).
+  This is a genuine approximation of "who broke it first," not a mock —
+  but the banner is explicit about its limit (same player ≠ same story,
+  since there's no event-clustering yet).
+- **"Prediction Accuracy" — entirely mock data**, hardcoded in the
+  frontend (`MOCK_ACCURACY_DATA` in `static/index.html`, not fetched from
+  any endpoint) illustrating what the eventual feature will look like.
+  Deliberately kept out of the backend so it can never be mistaken for
+  something the API actually computed.
+
+**Next real steps whenever this gets picked up further**: event
+clustering (the same blocker noted in the original scoping entry above)
+would upgrade "first to cover" from an approximation to something
+trustworthy; real accuracy tracking is blocked on the season actually
+starting.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
