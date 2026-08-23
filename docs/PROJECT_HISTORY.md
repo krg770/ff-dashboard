@@ -147,6 +147,33 @@ The `SimpleTable` frontend component takes an optional `timestampKey`
 prop — pass the column name and it shows the header + per-row badges;
 omit it and it renders exactly as before.
 
+## Consensus / repeated-mention tracking (2026-08-23)
+
+Question raised: if multiple podcasts independently say the same bearish
+(or bullish) thing about a player, should that count for more than one
+mention?
+
+**Decision: weight by distinct podcasts, not raw quote count.** Three
+mentions from the same show repeating itself across an episode isn't
+independent corroboration — three different shows converging on the same
+read is a real signal. Implemented two places:
+
+- **Hot/Cold Meter** gets a new **Buzz** column: number of distinct
+  podcasts that mentioned the player this content week, color-coded green
+  (net rising), red (net falling), or yellow (mixed/even split) —
+  `COUNT(DISTINCT e.podcast_id)` in `/api/hot_cold`, grouped by sentiment
+  count. Shows "—" when there's no podcast buzz on a player at all.
+- **Top riser / top faller callout**, added to the top "Latest Update"
+  bar: for the most recently processed pipeline run specifically (not the
+  whole week), whichever player has the most `rising`-tagged quotes and
+  whichever has the most `falling`-tagged quotes. Requires **at least 2**
+  mentions in that run to show (`MIN_RUN_MENTIONS` in `main.py`) — a
+  single mention isn't "most talked about," so nothing displays for that
+  side rather than showing a real but non-repeated one-off as if it were
+  consensus. (Note: within one run this counts quotes, not distinct
+  podcasts, since a single run is often one show's episode(s) — the
+  distinct-podcast weighting matters more at the weekly Hot/Cold level.)
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
