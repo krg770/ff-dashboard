@@ -110,7 +110,7 @@ def get_rankings():
     cur.execute(
         """
         SELECT p.full_name, p.team, p.position, r.value AS adp,
-               CEIL(r.value / 10) AS draft_round
+               CEIL(r.value / 10) AS draft_round, r.fetched_at
         FROM rankings r
         JOIN players p ON r.player_id = p.id
         WHERE r.rank_type = 'adp' AND r.season = %s
@@ -140,7 +140,8 @@ def get_round_focus(round: int = Query(..., ge=1)):
                         'quote', q.quote_text,
                         'sentiment', q.sentiment,
                         'tags', q.tags,
-                        'speaker', q.speaker
+                        'speaker', q.speaker,
+                        'created_at', q.created_at
                     )
                 ) FILTER (WHERE q.quote_text IS NOT NULL),
                 '[]'
@@ -169,6 +170,7 @@ def get_news():
         """
         SELECT p.full_name, p.team, p.position, q.quote_text, q.speaker,
                q.tags, q.sentiment, q.fantasy_relevance, q.match_confidence,
+               q.created_at,
                pod.name AS source_podcast, e.title AS source_episode,
                e.published_at AS source_published_at, e.processed_at AS source_downloaded_at
         FROM quotes q
@@ -194,7 +196,7 @@ def get_injuries():
     cur.execute(
         """
         SELECT p.full_name, p.team, p.position, i.report_status,
-               i.practice_status, i.week
+               i.practice_status, i.week, i.fetched_at
         FROM injuries i
         JOIN players p ON i.player_id = p.id
         WHERE i.season = %s

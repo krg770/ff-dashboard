@@ -96,6 +96,9 @@
   .fantasy-relevance { color: #6b7280; font-size: 11px; margin-top: 2px; }
   .source-cell { font-size: 11px; color: #9099a8; white-space: nowrap; }
   .source-date { color: #6b7280; }
+  .section-updated { font-size: 10px; color: #6b7280; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; }
+  .section-header-right { display: flex; align-items: center; gap: 8px; }
+  .new-badge { display: inline-block; background: #1e3a5f; color: #60a5fa; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 4px; letter-spacing: 0.5px; vertical-align: middle; }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -126,6 +129,48 @@ function useApi(path, deps = []) {
 
 function EmptyState({ text }) {
   return <div className="empty-state">{text || "Waiting on season data"}</div>;
+}
+
+const NEW_WINDOW_HOURS = 24;
+
+function timeAgo(dateStr) {
+  if (!dateStr) return null;
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  if (diffMs < 0) return "just now";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function isNew(dateStr) {
+  if (!dateStr) return false;
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  return diffMs >= 0 && diffMs < NEW_WINDOW_HOURS * 3600 * 1000;
+}
+
+function latestTimestamp(rows, getters) {
+  let max = null;
+  for (const row of rows || []) {
+    for (const get of getters) {
+      const v = get(row);
+      if (v && (!max || v > max)) max = v;
+    }
+  }
+  return max;
+}
+
+function SectionUpdated({ timestamp }) {
+  if (!timestamp) return null;
+  return <span className="section-updated">Updated {timeAgo(timestamp)}</span>;
+}
+
+function NewBadge({ timestamp }) {
+  if (!isNew(timestamp)) return null;
+  return <span className="new-badge">NEW</span>;
 }
 
 function SentimentBadge({ sentiment }) {
@@ -176,16 +221,23 @@ function LatestUpdate() {
 function RoundFocus() {
   const [round, setRound] = useState(5);
   const [data, loading] = useApi(`/api/round_focus?round=${round}`, [round]);
+  const updated = latestTimestamp(
+    (data || []).flatMap(p => p.weekly_quotes || []),
+    [q => q.created_at]
+  );
 
   return (
     <section className="grid-full">
       <h2>
-        Round Focus
-        <select value={round} onChange={e => setRound(Number(e.target.value))}>
-          {Array.from({length: 16}, (_, i) => i + 1).map(r => (
-            <option key={r} value={r}>Round {r}</option>
-          ))}
-        </select>
+        <span>Round Focus</span>
+        <span className="section-header-right">
+          <SectionUpdated timestamp={updated} />
+          <select value={round} onChange={e => setRound(Number(e.target.value))}>
+            {Array.from({length: 16}, (_, i) => i + 1).map(r => (
+              <option key={r} value={r}>Round {r}</option>
+            ))}
+          </select>
+        </span>
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text="No players in this round" /> :
@@ -202,7 +254,7 @@ function RoundFocus() {
                 {p.weekly_quotes && p.weekly_quotes.length > 0 ? (
                   p.weekly_quotes.map((q, j) => (
                     <div key={j} style={{marginBottom: 4}}>
-                      <SentimentBadge sentiment={q.sentiment} /> {q.quote}
+                      <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote}
                     </div>
                   ))
                 ) : <span style={{color: "#6b7280"}}>No mentions this week</span>}
@@ -217,9 +269,13 @@ function RoundFocus() {
 
 function Rankings() {
   const [data, loading] = useApi("/api/rankings", []);
+  const updated = latestTimestamp(data, [r => r.fetched_at]);
   return (
     <section>
-      <h2>Player Rankings (ADP)</h2>
+      <h2>
+        <span>Player Rankings (ADP)</span>
+        <SectionUpdated timestamp={updated} />
+      </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState /> :
       <table>
@@ -239,9 +295,13 @@ function Rankings() {
 
 function News() {
   const [data, loading] = useApi("/api/news", []);
+  const updated = latestTimestamp(data, [q => q.created_at]);
   return (
     <section>
-      <h2>Latest News</h2>
+      <h2>
+        <span>Latest News</span>
+        <SectionUpdated timestamp={updated} />
+      </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text="No podcast quotes this week yet" /> :
       <table>
@@ -254,7 +314,7 @@ function News() {
                 {q.match_confidence === "low" && <div className="confidence-low">possible mismatch</div>}
               </td>
               <td className="quote-cell">
-                <SentimentBadge sentiment={q.sentiment} /> {q.quote_text}
+                <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote_text}
                 {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
               </td>
               <td><Tags tags={q.tags} /></td>
@@ -271,18 +331,25 @@ function News() {
   );
 }
 
-function SimpleTable({ endpoint, title, columns, emptyText }) {
+function SimpleTable({ endpoint, title, columns, emptyText, timestampKey }) {
   const [data, loading] = useApi(endpoint, []);
+  const updated = timestampKey ? latestTimestamp(data, [r => r[timestampKey]]) : null;
   return (
     <section>
-      <h2>{title}</h2>
+      <h2>
+        <span>{title}</span>
+        <SectionUpdated timestamp={updated} />
+      </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text={emptyText} /> :
       <table>
-        <thead><tr>{columns.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+        <thead><tr>{columns.map(c => <th key={c.key}>{c.label}</th>)}{timestampKey && <th></th>}</tr></thead>
         <tbody>
           {data.map((row, i) => (
-            <tr key={i}>{columns.map(c => <td key={c.key}>{row[c.key]}</td>)}</tr>
+            <tr key={i}>
+              {columns.map(c => <td key={c.key}>{row[c.key]}</td>)}
+              {timestampKey && <td><NewBadge timestamp={row[timestampKey]} /></td>}
+            </tr>
           ))}
         </tbody>
       </table>}
@@ -307,7 +374,7 @@ function InSeasonTab() {
       <News />
       <SimpleTable endpoint="/api/injuries" title="Injuries"
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"report_status",label:"Status"},{key:"practice_status",label:"Practice"}]}
-        emptyText={waiting} />
+        emptyText={waiting} timestampKey="fetched_at" />
       <SimpleTable endpoint="/api/hot_cold" title="Hot / Cold Meter"
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"current_snap_pct",label:"Snap %"},{key:"delta",label:"Trend"}]}
         emptyText={waiting} />
