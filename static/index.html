@@ -119,6 +119,24 @@
   .news-group-header.clickable:hover { background: #22262f; }
   .collapse-arrow { display: inline-block; width: 12px; color: #6b7280; }
   .round-count { font-size: 10px; color: #6b7280; font-weight: 400; }
+  .dev-toggle {
+    background: none; border: 1px solid #2a2e37; color: #6b7280; font-size: 11px;
+    padding: 3px 8px; border-radius: 4px; cursor: pointer; font-family: inherit;
+  }
+  .dev-toggle:hover { color: #e4e6eb; border-color: #4f8cff; }
+  .dev-panel {
+    background: #0b0d11; border-bottom: 1px solid #2a2e37; padding: 10px 20px;
+    font-size: 11px; color: #9099a8; font-family: "Consolas", "SF Mono", monospace;
+  }
+  .dev-panel-row { margin-bottom: 3px; }
+  .dev-panel-row strong { color: #e4e6eb; font-weight: 600; }
+  .dev-panel-table { width: auto; margin-top: 4px; font-size: 10.5px; }
+  .dev-panel-table th, .dev-panel-table td { padding: 3px 10px 3px 0; border: none; color: #9099a8; }
+  .dev-panel-table th { color: #6b7280; text-transform: none; }
+  .experimental-banner {
+    background: #2a2210; border: 1px solid #4a3a10; color: #fbbf24;
+    padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;
+  }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -323,6 +341,41 @@ function PipelineStatusBar() {
       {data.last_finished_at && <> — last run finished {timeAgo(data.last_finished_at)}</>}
       {data.last_poll_at && <> — feeds last checked {timeAgo(data.last_poll_at)} ({data.last_poll_new_count ?? 0} new found)</>}
       {data.episodes_queued_total > 0 && <> — <strong>{data.episodes_queued_total}</strong> episode(s) queued</>}
+    </div>
+  );
+}
+
+function DevPanel({ open }) {
+  const [data, loading] = useApi("/api/dev_status", [], open ? 10000 : null);
+  if (!open) return null;
+  if (loading || !data) return <div className="dev-panel">Loading dev status...</div>;
+
+  const p = data.pipeline || {};
+  return (
+    <div className="dev-panel">
+      <div className="dev-panel-row"><strong>Server time:</strong> {new Date(data.server_time).toLocaleString()}</div>
+      <div className="dev-panel-row"><strong>Cron schedule:</strong> {data.cron_schedule}</div>
+      <div className="dev-panel-row"><strong>Next scheduled run:</strong> {new Date(data.next_scheduled_run).toLocaleString()}</div>
+      <div className="dev-panel-row"><strong>Pipeline running:</strong> {p.is_running ? `yes — ${p.current_episode_title || "?"} (${p.stage})` : "no"}</div>
+      <div className="dev-panel-row"><strong>Last poll:</strong> {p.last_poll_at ? `${timeAgo(p.last_poll_at)} — ${p.last_poll_new_count ?? 0} new episode(s) found` : "never (since pipeline_status tracking was added)"}</div>
+      <div className="dev-panel-row"><strong>Last run finished:</strong> {p.last_finished_at ? timeAgo(p.last_finished_at) : "n/a"}</div>
+      <div className="dev-panel-row"><strong>Error episodes (all-time):</strong> {data.total_error_episodes}</div>
+      <div className="dev-panel-row" style={{marginTop: 6}}><strong>Episodes by podcast/status:</strong></div>
+      <table className="dev-panel-table">
+        <thead><tr><th>Podcast</th><th>new</th><th>transcribed</th><th>extracted</th><th>error</th><th>skipped</th></tr></thead>
+        <tbody>
+          {data.podcasts.map((pod, i) => (
+            <tr key={i}>
+              <td>{pod.name}</td>
+              <td>{pod.counts.new || 0}</td>
+              <td>{pod.counts.transcribed || 0}</td>
+              <td>{pod.counts.extracted || 0}</td>
+              <td>{pod.counts.error || 0}</td>
+              <td>{pod.counts.skipped || 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -560,6 +613,79 @@ function DraftTab() {
   );
 }
 
+const MOCK_ACCURACY_DATA = [
+  { podcast: "Fantasy Football Today", sample_calls: 14, hit_rate: 0.71 },
+  { podcast: "RotoWire Fantasy Football", sample_calls: 9, hit_rate: 0.56 },
+  { podcast: "Fantasy Footballers", sample_calls: 11, hit_rate: 0.64 },
+  { podcast: "Locked On Fantasy Football", sample_calls: 8, hit_rate: 0.63 },
+];
+
+function ReliabilityTab() {
+  const [data, loading] = useApi("/api/reliability", []);
+
+  return (
+    <div>
+      <div className="experimental-banner">
+        🧪 <strong>Experimental.</strong> "First to Cover" below is real,
+        computed data — but it's an approximation: it flags which podcast's
+        episode aired earliest among shows mentioning the same player, not
+        necessarily the same underlying story. "Prediction Accuracy" is
+        entirely <strong>sample/mock data</strong> illustrating the target
+        feature — real accuracy tracking requires actual season outcomes,
+        which don't exist yet (the season hasn't started). Do not use
+        either section to make draft or roster decisions.
+      </div>
+
+      <section className="grid-full">
+        <h2><span>First to Cover This Week (real data)</span></h2>
+        {loading ? <EmptyState text="Loading..." /> :
+         (!data || data.shared_player_count === 0) ? <EmptyState text="No players mentioned by 2+ podcasts yet this week" /> :
+        <div>
+          <div style={{padding: "10px 12px", fontSize: 12, color: "#9099a8"}}>
+            Of {data.shared_player_count} players mentioned by 2+ podcasts this week, here's who covered them first:
+          </div>
+          <table>
+            <thead><tr><th>Podcast</th><th>Times First</th></tr></thead>
+            <tbody>
+              {data.first_to_cover_tally.map((r, i) => (
+                <tr key={i}><td>{r.podcast}</td><td>{r.first_mentions}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <table style={{marginTop: 12}}>
+            <thead><tr><th>Player</th><th>First Covered By</th><th>When</th></tr></thead>
+            <tbody>
+              {data.first_to_cover_detail.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.full_name}</td>
+                  <td>{r.podcast_name}</td>
+                  <td>{new Date(r.first_mention_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+      </section>
+
+      <section className="grid-full">
+        <h2><span>Prediction Accuracy (mock data — not real)</span></h2>
+        <table>
+          <thead><tr><th>Podcast</th><th>Sample Calls Tracked</th><th>Hit Rate</th></tr></thead>
+          <tbody>
+            {MOCK_ACCURACY_DATA.map((r, i) => (
+              <tr key={i}>
+                <td>{r.podcast}</td>
+                <td>{r.sample_calls}</td>
+                <td>{Math.round(r.hit_rate * 100)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
 function InSeasonTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
@@ -601,20 +727,28 @@ function InSeasonTab() {
 
 function App() {
   const [tab, setTab] = useState("draft");
+  const [devOpen, setDevOpen] = useState(false);
   return (
     <React.Fragment>
       <header>
         <h1>Fantasy Football Command Center</h1>
-        <span style={{color:"#6b7280", fontSize:12}}>10-Team League</span>
+        <span style={{display: "flex", alignItems: "center", gap: 10}}>
+          <span style={{color:"#6b7280", fontSize:12}}>10-Team League</span>
+          <button className="dev-toggle" onClick={() => setDevOpen(o => !o)}>
+            {devOpen ? "▾ Dev" : "▸ Dev"}
+          </button>
+        </span>
       </header>
+      <DevPanel open={devOpen} />
       <LatestUpdate />
       <PipelineStatusBar />
       <div className="tabs">
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
+        <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
       </div>
       <main>
-        {tab === "draft" ? <DraftTab /> : <InSeasonTab />}
+        {tab === "draft" ? <DraftTab /> : tab === "season" ? <InSeasonTab /> : <ReliabilityTab />}
       </main>
     </React.Fragment>
   );

@@ -7,7 +7,7 @@ Usage:
 Then open http://localhost:8000 in a browser.
 """
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,20 @@ SEASON = 2026
 # the "top" riser/faller for that run - avoids surfacing a one-off mention
 # as if it were a consensus signal.
 MIN_RUN_MENTIONS = 2
+# Mirrors the WSL crontab entry (`0 8-22/2 * * *`) - not read from crontab
+# directly, just kept in sync manually. Used only to estimate "next run"
+# for the dev panel; the actual schedule lives in cron, this is display-only.
+CRON_HOURS = [8, 10, 12, 14, 16, 18, 20, 22]
+
+
+def next_scheduled_run():
+    now = datetime.now()
+    for h in CRON_HOURS:
+        candidate = now.replace(hour=h, minute=0, second=0, microsecond=0)
+        if candidate > now:
+            return candidate
+    tomorrow = now + timedelta(days=1)
+    return tomorrow.replace(hour=CRON_HOURS[0], minute=0, second=0, microsecond=0)
 
 
 def dict_rows(cur):
@@ -144,6 +158,104 @@ def get_pipeline_status():
     done = status.get("episodes_done_this_run")
     status["episodes_remaining_this_run"] = (total - done) if (total is not None and done is not None) else None
     return status
+
+
+@app.get("/api/dev_status")
+def get_dev_status():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM pipeline_status WHERE id = 1")
+    rows = dict_rows(cur)
+    pipeline = rows[0] if rows else {}
+
+    cur.execute(
+        """
+        SELECT pod.name, e.status, count(*)
+        FROM episodes e JOIN podcasts pod ON e.podcast_id = pod.id
+        GROUP BY pod.name, e.status
+        ORDER BY pod.name, e.status
+        """
+    )
+    by_podcast = defaultdict(dict)
+    for name, status, count in cur.fetchall():
+        by_podcast[name][status] = count
+
+    cur.execute("SELECT count(*) FROM episodes WHERE status = 'error'")
+    error_count = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    return {
+        "pipeline": pipeline,
+        "podcasts": [{"name": name, "counts": counts} for name, counts in by_podcast.items()],
+        "total_error_episodes": error_count,
+        "cron_schedule": "Every 2h, 8am-10pm daily (0 8-22/2 * * *)",
+        "next_scheduled_run": next_scheduled_run().isoformat(),
+        "server_time": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/reliability")
+def get_reliability():
+    """
+    First pass at source-reliability tracking (experimental - see
+    docs/PROJECT_HISTORY.md). Only "first to cover" is real, computed
+    data; it's an approximation (same player mentioned != same underlying
+    news event, since we don't do semantic event-clustering yet - see
+    docs). Outcome/accuracy tracking isn't included here at all: it
+    can't be computed until real season stats exist. The frontend shows
+    a clearly-labeled mock table for that part.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    week = current_content_week()
+
+    cur.execute(
+        """
+        WITH player_podcast_first AS (
+            SELECT q.player_id, p.full_name, pod.id AS podcast_id, pod.name AS podcast_name,
+                   MIN(e.published_at) AS first_mention_at
+            FROM quotes q
+            JOIN episodes e ON q.episode_id = e.id
+            JOIN podcasts pod ON e.podcast_id = pod.id
+            JOIN players p ON q.player_id = p.id
+            WHERE q.content_week = %s
+            GROUP BY q.player_id, p.full_name, pod.id, pod.name
+        ),
+        shared AS (
+            SELECT player_id FROM player_podcast_first
+            GROUP BY player_id HAVING count(DISTINCT podcast_id) >= 2
+        ),
+        ranked AS (
+            SELECT ppf.*,
+                   ROW_NUMBER() OVER (PARTITION BY ppf.player_id ORDER BY first_mention_at ASC) AS rn
+            FROM player_podcast_first ppf
+            JOIN shared s ON s.player_id = ppf.player_id
+        )
+        SELECT podcast_name, full_name, first_mention_at
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY first_mention_at ASC
+        """,
+        (week,),
+    )
+    first_to_cover_detail = dict_rows(cur)
+
+    tally = defaultdict(int)
+    for row in first_to_cover_detail:
+        tally[row["podcast_name"]] += 1
+
+    cur.close()
+    conn.close()
+
+    return {
+        "week": str(week),
+        "first_to_cover_tally": [{"podcast": k, "first_mentions": v} for k, v in sorted(tally.items(), key=lambda kv: -kv[1])],
+        "first_to_cover_detail": first_to_cover_detail,
+        "shared_player_count": len(first_to_cover_detail),
+    }
 
 
 @app.get("/api/rankings")
