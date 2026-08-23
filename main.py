@@ -6,6 +6,7 @@ Usage:
     uvicorn main:app --reload --port 8000
 Then open http://localhost:8000 in a browser.
 """
+import math
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from fastapi import FastAPI, Query
@@ -27,6 +28,11 @@ SEASON = 2026
 # the "top" riser/faller for that run - avoids surfacing a one-off mention
 # as if it were a consensus signal.
 MIN_RUN_MENTIONS = 2
+# 10-team, $200/team auction league settings for the Salary tab.
+LEAGUE_TEAMS = 10
+LEAGUE_BUDGET = 200
+ROSTER_SPOTS = 16  # matches the round<=16 cap used elsewhere (Rankings, Round Focus)
+MIN_BID = 1
 # Mirrors the WSL crontab entry (`0 8-22/2 * * *`) - not read from crontab
 # directly, just kept in sync manually. Used only to estimate "next run"
 # for the dev panel; the actual schedule lives in cron, this is display-only.
@@ -316,6 +322,99 @@ def get_round_focus(round: int | None = Query(None, ge=1)):
     cur.close()
     conn.close()
     return result
+
+
+@app.get("/api/salary")
+def get_salary():
+    """
+    Derives auction dollar values for a 10-team, $200 league from ADP -
+    there's no real auction-value data source wired up. Every rostered
+    player gets a $1 floor; the rest of the pool is split by ADP rank
+    using exponential decay (weight = e^(-k * (rank-1)), k=0.03, tuned
+    so rank 1 lands ~$55 and rank 60 ~$10, matching how real auction
+    values actually curve - steep at the top, flat by mid-bench). A
+    straight linear split on raw ADP was tried first and rejected: it
+    compressed the whole first round to ~$23 each, since ADP 1.6 and
+    9.9 are numerically close relative to the ADP range - realistic
+    auction value drops off far faster than that at the top.
+
+    Pay meter (pay_up / pay_down / pay_average) reuses the same
+    distinct-podcast buzz signal as the Hot/Cold Meter's Buzz column.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    week = current_content_week()
+
+    cur.execute(
+        """
+        SELECT p.id, p.full_name, p.team, p.position, r.value AS adp, CEIL(r.value / 10) AS draft_round
+        FROM players p
+        JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        WHERE r.value IS NOT NULL AND CEIL(r.value / 10) <= %s
+        ORDER BY r.value ASC
+        """,
+        (SEASON, ROSTER_SPOTS),
+    )
+    players = cur.fetchall()
+
+    cur.execute(
+        """
+        SELECT q.player_id,
+               COUNT(DISTINCT e.podcast_id) AS podcast_count,
+               COUNT(*) FILTER (WHERE q.sentiment = 'rising') AS rising_count,
+               COUNT(*) FILTER (WHERE q.sentiment = 'falling') AS falling_count,
+               COALESCE(
+                   json_agg(
+                       json_build_object(
+                           'quote', q.quote_text, 'sentiment', q.sentiment,
+                           'tags', q.tags, 'speaker', q.speaker, 'created_at', q.created_at
+                       )
+                   ) FILTER (WHERE q.quote_text IS NOT NULL),
+                   '[]'
+               ) AS weekly_quotes
+        FROM quotes q
+        JOIN episodes e ON q.episode_id = e.id
+        WHERE q.content_week = %s AND q.player_id IS NOT NULL
+        GROUP BY q.player_id
+        """,
+        (week,),
+    )
+    buzz_cols = [d[0] for d in cur.description]
+    buzz_by_player = {row[0]: dict(zip(buzz_cols, row)) for row in cur.fetchall()}
+
+    cur.close()
+    conn.close()
+
+    n = len(players)
+    total_pool = LEAGUE_TEAMS * LEAGUE_BUDGET
+    value_pool = total_pool - MIN_BID * n
+    decay_k = 0.03
+    weights = [math.exp(-decay_k * i) for i in range(n)]
+    weight_sum = sum(weights) or 1
+
+    result = []
+    for (player_id, full_name, team, position, adp, draft_round), weight in zip(players, weights):
+        auction_value = MIN_BID + round(value_pool * weight / weight_sum)
+        buzz = buzz_by_player.get(player_id, {})
+        rising = buzz.get("rising_count", 0)
+        falling = buzz.get("falling_count", 0)
+        if rising > falling:
+            pay_meter = "pay_up"
+        elif falling > rising:
+            pay_meter = "pay_down"
+        else:
+            pay_meter = "pay_average"
+        result.append({
+            "player_id": player_id, "full_name": full_name, "team": team, "position": position,
+            "adp": adp, "draft_round": draft_round, "auction_value": auction_value,
+            "pay_meter": pay_meter, "buzz_podcast_count": buzz.get("podcast_count", 0),
+            "weekly_quotes": buzz.get("weekly_quotes", []),
+        })
+
+    return {
+        "league_teams": LEAGUE_TEAMS, "league_budget": LEAGUE_BUDGET,
+        "roster_spots": ROSTER_SPOTS, "players": result,
+    }
 
 
 @app.get("/api/news")

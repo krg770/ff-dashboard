@@ -459,6 +459,99 @@ function RoundFocus() {
   );
 }
 
+function PayMeterBadge({ payMeter }) {
+  const label = { pay_up: "PAY UP", pay_down: "PAY DOWN", pay_average: "PAY AVG" }[payMeter] || payMeter;
+  const cls = { pay_up: "rising", pay_down: "falling", pay_average: "neutral" }[payMeter] || "neutral";
+  return <span className={"badge " + cls}>{label}</span>;
+}
+
+function SalaryTab() {
+  const [resp, loading] = useApi("/api/salary", []);
+  const [expanded, setExpanded] = useState(() => new Set([1]));
+  const players = resp ? resp.players : null;
+  const updated = latestTimestamp(
+    (players || []).flatMap(p => p.weekly_quotes || []),
+    [q => q.created_at]
+  );
+  const rounds = React.useMemo(() => {
+    const map = new Map();
+    for (const p of (players || [])) {
+      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
+      map.get(p.draft_round).push(p);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+  }, [players]);
+
+  const toggleRound = (round) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(round)) next.delete(round); else next.add(round);
+      return next;
+    });
+  };
+
+  return (
+    <div>
+      <div className="experimental-banner" style={{background: "#14202e", borderColor: "#1e3a5f", color: "#9099a8"}}>
+        💰 Auction values below are <strong>derived from ADP</strong>, not
+        real published auction prices — there's no data source for those
+        wired up. Standard value-over-replacement math: every rostered
+        player gets a $1 floor, the rest of a {resp ? `${resp.league_teams}-team, $${resp.league_budget}` : "10-team, $200"}-per-team
+        pool splits by ADP rank on a decay curve. Treat as a reasonable
+        starting estimate, not gospel.
+      </div>
+      <section className="grid-full">
+        <h2>
+          <span>Salary ({resp ? `${resp.league_teams}-Team, $${resp.league_budget}` : "10-Team, $200"})</span>
+          <SectionUpdated timestamp={updated} />
+        </h2>
+        {loading ? <EmptyState text="Loading..." /> :
+         (!players || players.length === 0) ? <EmptyState text="No players yet" /> :
+        <div>
+          {rounds.map(([round, roundPlayers]) => {
+            const isOpen = expanded.has(round);
+            return (
+            <div className="news-group" key={round}>
+              <div className="news-group-header clickable" onClick={() => toggleRound(round)}>
+                <span className="news-group-player">
+                  <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Round {round}
+                </span>
+                <span className="round-count">{roundPlayers.length} players</span>
+              </div>
+              {isOpen &&
+              <table>
+                <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Value</th><th>Pay Meter</th><th>Podcast Buzz This Week</th></tr></thead>
+                <tbody>
+                  {roundPlayers.map((p, i) => (
+                    <tr key={i}>
+                      <td>{p.full_name}</td>
+                      <td>{p.team}</td>
+                      <td>{p.position}</td>
+                      <td>{p.adp}</td>
+                      <td>${p.auction_value}</td>
+                      <td><PayMeterBadge payMeter={p.pay_meter} /></td>
+                      <td className="quote-cell">
+                        {p.weekly_quotes && p.weekly_quotes.length > 0 ? (
+                          p.weekly_quotes.map((q, j) => (
+                            <div key={j} style={{marginBottom: 4}}>
+                              <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote}
+                            </div>
+                          ))
+                        ) : <span style={{color: "#6b7280"}}>No mentions this week</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>}
+            </div>
+            );
+          })}
+        </div>}
+      </section>
+    </div>
+  );
+}
+
 function Rankings() {
   const [data, loading] = useApi("/api/rankings", []);
   const updated = latestTimestamp(data, [r => r.fetched_at]);
@@ -749,11 +842,14 @@ function App() {
       <PipelineStatusBar />
       <div className="tabs">
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
+        <div className={"tab " + (tab === "salary" ? "active" : "")} onClick={() => setTab("salary")}>Salary</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
         <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
       </div>
       <main>
-        {tab === "draft" ? <DraftTab /> : tab === "season" ? <InSeasonTab /> : <ReliabilityTab />}
+        {tab === "draft" ? <DraftTab /> :
+         tab === "salary" ? <SalaryTab /> :
+         tab === "season" ? <InSeasonTab /> : <ReliabilityTab />}
       </main>
     </React.Fragment>
   );
