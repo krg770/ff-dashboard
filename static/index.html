@@ -39,6 +39,8 @@
     margin-top: 6px;
     margin-bottom: 4px;
   }
+  .injury-alert-header.clickable { cursor: pointer; user-select: none; }
+  .injury-alert-header.clickable:hover { color: #fca5a5; }
   .injury-alert-row { font-size: 12px; margin-bottom: 3px; }
   .injury-alert-row strong { color: #e4e6eb; }
   .tabs { display: flex; gap: 4px; padding: 0 20px; background: #14161c; border-bottom: 1px solid #2a2e37; }
@@ -260,6 +262,7 @@ function Tags({ tags }) {
 
 function LatestUpdate() {
   const [data, loading] = useApi("/api/latest_run", []);
+  const [injuryOpen, setInjuryOpen] = useState(false);
   if (loading || !data || !data.episodes || data.episodes.length === 0) return null;
 
   const quotes = data.quotes || [];
@@ -292,8 +295,10 @@ function LatestUpdate() {
       )}
       {injuryQuotes.length > 0 && (
         <div>
-          <div className="injury-alert-header">⚠ NEW INJURY NEWS ({injuryQuotes.length})</div>
-          {injuryQuotes.map((q, i) => (
+          <div className="injury-alert-header clickable" onClick={() => setInjuryOpen(o => !o)}>
+            <span className="collapse-arrow">{injuryOpen ? "▾" : "▸"}</span> ⚠ NEW INJURY NEWS ({injuryQuotes.length})
+          </div>
+          {injuryOpen && injuryQuotes.map((q, i) => (
             <div key={i} className="injury-alert-row">
               <strong>{q.full_name || "Unmatched player"}:</strong> {q.quote_text}
               {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
