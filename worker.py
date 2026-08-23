@@ -83,6 +83,14 @@ def run_extraction(transcript: str, roster_context: str) -> list:
         return []
 
 
+def update_pipeline_status(cur, conn, **fields):
+    if not fields:
+        return
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    cur.execute(f"UPDATE pipeline_status SET {set_clause} WHERE id = 1", list(fields.values()))
+    conn.commit()
+
+
 def resolve_player(cur, raw_mention: str):
     cur.execute(
         "SELECT player_id FROM player_aliases WHERE lower(alias) = lower(%s)",
@@ -108,16 +116,22 @@ def resolve_player(cur, raw_mention: str):
     return None, "unreviewed"
 
 
-def process_episode(episode_id, audio_url, content_week, model, cur, conn):
+def process_episode(episode_id, title, audio_url, content_week, model, cur, conn):
     raw_path = WORK_DIR / f"{episode_id}_raw.mp3"
     fast_path = WORK_DIR / f"{episode_id}_fast.mp3"
 
+    update_pipeline_status(
+        cur, conn,
+        current_episode_id=episode_id, current_episode_title=title,
+        stage="downloading", stage_started_at=datetime.now(timezone.utc),
+    )
     print(f"  Downloading episode {episode_id}...")
     download_audio(audio_url, raw_path)
 
     print("  Speeding up audio...")
     speed_up_audio(raw_path, fast_path)
 
+    update_pipeline_status(cur, conn, stage="transcribing", stage_started_at=datetime.now(timezone.utc))
     print("  Transcribing...")
     transcript = transcribe(fast_path, model)
 
@@ -127,6 +141,7 @@ def process_episode(episode_id, audio_url, content_week, model, cur, conn):
     )
     conn.commit()
 
+    update_pipeline_status(cur, conn, stage="extracting", stage_started_at=datetime.now(timezone.utc))
     print("  Extracting quotes...")
     roster_context = build_roster_context(cur)
     quotes = run_extraction(transcript, roster_context)
@@ -176,26 +191,51 @@ def run():
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id, audio_url, content_week FROM episodes WHERE status = 'new' AND audio_url IS NOT NULL"
+        "SELECT id, title, audio_url, content_week FROM episodes WHERE status = 'new' AND audio_url IS NOT NULL"
     )
     episodes = cur.fetchall()
 
     if not episodes:
         print("No new episodes to process.")
+        cur.close()
+        conn.close()
         return
+
+    update_pipeline_status(
+        cur, conn,
+        is_running=True, run_started_at=run_timestamp,
+        episodes_total_this_run=len(episodes), episodes_done_this_run=0,
+        current_episode_id=None, current_episode_title=None,
+        stage="loading_model", stage_started_at=run_timestamp,
+    )
 
     print(f"Loading Whisper model ({WHISPER_MODEL_SIZE})...")
     model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 
-    for episode_id, audio_url, content_week in episodes:
+    done = 0
+    for episode_id, title, audio_url, content_week in episodes:
         try:
-            process_episode(episode_id, audio_url, content_week, model, cur, conn)
+            process_episode(episode_id, title, audio_url, content_week, model, cur, conn)
             cur.execute("UPDATE episodes SET processed_at = %s WHERE id = %s", (run_timestamp, episode_id))
             conn.commit()
         except Exception as e:
             print(f"  ERROR processing episode {episode_id}: {e}")
             cur.execute("UPDATE episodes SET status = 'error' WHERE id = %s", (episode_id,))
             conn.commit()
+        finally:
+            done += 1
+            elapsed_total = (datetime.now(timezone.utc) - run_timestamp).total_seconds()
+            update_pipeline_status(
+                cur, conn,
+                episodes_done_this_run=done,
+                avg_seconds_per_episode=elapsed_total / done,
+            )
+
+    update_pipeline_status(
+        cur, conn,
+        is_running=False, current_episode_id=None, current_episode_title=None,
+        stage=None, last_finished_at=datetime.now(timezone.utc),
+    )
 
     cur.close()
     conn.close()

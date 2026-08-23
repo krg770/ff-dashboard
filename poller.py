@@ -80,6 +80,10 @@ def poll_all():
             total_new += 1
             print(f"  New episode: {title}")
 
+    cur.execute(
+        "UPDATE pipeline_status SET last_poll_at = %s, last_poll_new_count = %s WHERE id = 1",
+        (datetime.now(timezone.utc), total_new),
+    )
     conn.commit()
     cur.close()
     conn.close()

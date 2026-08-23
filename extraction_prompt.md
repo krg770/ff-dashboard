@@ -16,10 +16,20 @@ You are analyzing a fantasy football podcast transcript for a 10-team
 redraft league. Extract actionable player news useful for both draft
 prep and in-season roster decisions.
 
+CRITICAL - one player per item: if a single statement discusses multiple
+players (e.g. "You could see Judkins and Skattebo not working on passing
+down"), do NOT combine their names into one `raw_player_mention` like
+"Judkins and Scattaboo" - that can't be matched to any one player. Emit a
+SEPARATE array item per player instead, each with its own isolated
+`raw_player_mention` (just that one player's name), sharing the same
+`quote_text` and other context fields, with `fantasy_relevance` adjusted
+per player if the implication differs between them.
+
 For each item found, extract:
 
-- `raw_player_mention`: the player name exactly as said in the transcript
-  (don't normalize it — the matching step downstream handles that)
+- `raw_player_mention`: the player name exactly as said in the transcript,
+  for ONE player only (don't normalize it — the matching step downstream
+  handles that; see the multi-player rule above)
 - `best_guess_player_id`: if you can confidently match the mention to a
   player in the provided roster list, return their canonical id;
   otherwise return null

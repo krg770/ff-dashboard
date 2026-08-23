@@ -103,6 +103,11 @@
   .buzz-callout-item { font-size: 12px; }
   .buzz-callout-item.rising strong { color: #4ade80; }
   .buzz-callout-item.falling strong { color: #f87171; }
+  .pipeline-status-bar { padding: 6px 20px; font-size: 11px; background: #14161c; border-bottom: 1px solid #2a2e37; color: #9099a8; }
+  .pipeline-status-bar.running { color: #60a5fa; }
+  .pipeline-status-bar strong { color: #e4e6eb; }
+  .pipeline-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; margin-right: 6px; animation: pipeline-pulse 1.5s infinite; }
+  @keyframes pipeline-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -118,15 +123,21 @@ const { useState, useEffect } = React;
 
 const API = "";
 
-function useApi(path, deps = []) {
+function useApi(path, deps = [], refreshMs = null) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    let cancelled = false;
+    function load() {
+      fetch(API + path)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+        .catch(() => { if (!cancelled) { setData([]); setLoading(false); } });
+    }
     setLoading(true);
-    fetch(API + path)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => { setData([]); setLoading(false); });
+    load();
+    const interval = refreshMs ? setInterval(load, refreshMs) : null;
+    return () => { cancelled = true; if (interval) clearInterval(interval); };
   }, deps);
   return [data, loading];
 }
@@ -241,6 +252,46 @@ function LatestUpdate() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function formatDuration(seconds) {
+  if (seconds == null || seconds < 0 || !isFinite(seconds)) return null;
+  const mins = Math.round(seconds / 60);
+  if (mins < 1) return "<1m";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
+function PipelineStatusBar() {
+  const [data, loading] = useApi("/api/pipeline_status", [], 15000);
+  if (loading || !data) return null;
+
+  if (data.is_running) {
+    const remaining = data.episodes_remaining_this_run;
+    const eta = (remaining > 0 && data.avg_seconds_per_episode)
+      ? formatDuration(remaining * data.avg_seconds_per_episode)
+      : null;
+    const stageLabel = { loading_model: "loading model", downloading: "downloading", transcribing: "transcribing", extracting: "extracting quotes" }[data.stage] || data.stage;
+    return (
+      <div className="pipeline-status-bar running">
+        <span className="pipeline-dot" />
+        Processing{data.current_episode_title && <>: <strong>{data.current_episode_title}</strong></>}
+        {stageLabel && <> ({stageLabel})</>}
+        {data.episodes_total_this_run && <> — episode {Math.min(data.episodes_done_this_run + 1, data.episodes_total_this_run)} of {data.episodes_total_this_run}</>}
+        {eta && <> — ETA ~{eta}</>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="pipeline-status-bar">
+      Pipeline idle
+      {data.last_finished_at && <> — last run finished {timeAgo(data.last_finished_at)}</>}
+      {data.last_poll_at && <> — feeds last checked {timeAgo(data.last_poll_at)} ({data.last_poll_new_count ?? 0} new found)</>}
+      {data.episodes_queued_total > 0 && <> — <strong>{data.episodes_queued_total}</strong> episode(s) queued</>}
     </div>
   );
 }
@@ -442,6 +493,7 @@ function App() {
         <span style={{color:"#6b7280", fontSize:12}}>10-Team League</span>
       </header>
       <LatestUpdate />
+      <PipelineStatusBar />
       <div className="tabs">
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>

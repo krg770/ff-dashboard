@@ -127,6 +127,25 @@ def get_latest_run():
     }
 
 
+@app.get("/api/pipeline_status")
+def get_pipeline_status():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM pipeline_status WHERE id = 1")
+    rows = dict_rows(cur)
+    cur.execute("SELECT count(*) FROM episodes WHERE status = 'new'")
+    queued = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+
+    status = rows[0] if rows else {}
+    status["episodes_queued_total"] = queued
+    total = status.get("episodes_total_this_run")
+    done = status.get("episodes_done_this_run")
+    status["episodes_remaining_this_run"] = (total - done) if (total is not None and done is not None) else None
+    return status
+
+
 @app.get("/api/rankings")
 def get_rankings():
     conn = get_conn()
