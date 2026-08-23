@@ -108,6 +108,14 @@
   .pipeline-status-bar strong { color: #e4e6eb; }
   .pipeline-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; margin-right: 6px; animation: pipeline-pulse 1.5s infinite; }
   @keyframes pipeline-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .news-group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: #1c2029;
+    border-top: 1px solid #262a33; border-bottom: 1px solid #262a33;
+    font-size: 12.5px; font-weight: 600;
+  }
+  .news-group-player { color: #e4e6eb; }
+  .news-group:first-child .news-group-header { border-top: none; }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -190,11 +198,31 @@ function NewBadge({ timestamp }) {
 
 function BuzzBadge({ podcastCount, risingCount, fallingCount }) {
   if (!podcastCount) return <span style={{color: "#4b5060"}}>—</span>;
-  let cls = "mixed";
+  let cls = "neutral";
   if (risingCount > fallingCount) cls = "rising";
   else if (fallingCount > risingCount) cls = "falling";
+  else if (risingCount > 0 && fallingCount > 0) cls = "mixed";
   const label = podcastCount === 1 ? "1 show" : `${podcastCount} shows`;
   return <span className={"badge " + cls}>{label}</span>;
+}
+
+function groupNewsByPlayer(data) {
+  const groups = new Map();
+  const unmatched = [];
+  for (const q of data) {
+    if (!q.full_name) { unmatched.push(q); continue; }
+    if (!groups.has(q.full_name)) groups.set(q.full_name, []);
+    groups.get(q.full_name).push(q);
+  }
+  const grouped = Array.from(groups.entries()).map(([name, quotes]) => {
+    const podcastCount = new Set(quotes.map(q => q.source_podcast).filter(Boolean)).size;
+    const risingCount = quotes.filter(q => q.sentiment === "rising").length;
+    const fallingCount = quotes.filter(q => q.sentiment === "falling").length;
+    const latest = latestTimestamp(quotes, [q => q.created_at]);
+    return { name, quotes, podcastCount, risingCount, fallingCount, latest };
+  });
+  grouped.sort((a, b) => b.podcastCount - a.podcastCount || (b.latest || "").localeCompare(a.latest || ""));
+  return { grouped, unmatched };
 }
 
 function SentimentBadge({ sentiment }) {
@@ -371,40 +399,66 @@ function Rankings() {
   );
 }
 
+function NewsQuoteRow({ q }) {
+  return (
+    <tr>
+      <td className="quote-cell">
+        <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote_text}
+        {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
+        {q.match_confidence === "low" && <div className="confidence-low">possible mismatch</div>}
+      </td>
+      <td><Tags tags={q.tags} /></td>
+      <td className="source-cell">
+        {q.source_podcast && <div>{q.source_podcast}</div>}
+        {q.source_published_at && <div className="source-date">Aired {new Date(q.source_published_at).toLocaleDateString()}</div>}
+        {q.source_downloaded_at && <div className="source-date">Processed {new Date(q.source_downloaded_at).toLocaleDateString()}</div>}
+      </td>
+    </tr>
+  );
+}
+
 function News() {
   const [data, loading] = useApi("/api/news", []);
   const updated = latestTimestamp(data, [q => q.created_at]);
+  const { grouped, unmatched } = React.useMemo(() => groupNewsByPlayer(data || []), [data]);
+
   return (
-    <section>
+    <section className="grid-full">
       <h2>
         <span>Latest News</span>
         <SectionUpdated timestamp={updated} />
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text="No podcast quotes this week yet" /> :
-      <table>
-        <thead><tr><th>Player</th><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
-        <tbody>
-          {data.map((q, i) => (
-            <tr key={i}>
-              <td>
-                {q.full_name || <em style={{color:"#6b7280"}}>{"unmatched"}</em>}
-                {q.match_confidence === "low" && <div className="confidence-low">possible mismatch</div>}
-              </td>
-              <td className="quote-cell">
-                <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote_text}
-                {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
-              </td>
-              <td><Tags tags={q.tags} /></td>
-              <td className="source-cell">
-                {q.source_podcast && <div>{q.source_podcast}</div>}
-                {q.source_published_at && <div className="source-date">Aired {new Date(q.source_published_at).toLocaleDateString()}</div>}
-                {q.source_downloaded_at && <div className="source-date">Processed {new Date(q.source_downloaded_at).toLocaleDateString()}</div>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>}
+      <div>
+        {grouped.map((g, gi) => (
+          <div className="news-group" key={gi}>
+            <div className="news-group-header">
+              <span className="news-group-player">{g.name}</span>
+              <BuzzBadge podcastCount={g.podcastCount} risingCount={g.risingCount} fallingCount={g.fallingCount} />
+            </div>
+            <table>
+              <thead><tr><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
+              <tbody>
+                {g.quotes.map((q, i) => <NewsQuoteRow q={q} key={i} />)}
+              </tbody>
+            </table>
+          </div>
+        ))}
+        {unmatched.length > 0 && (
+          <div className="news-group">
+            <div className="news-group-header">
+              <span className="news-group-player"><em style={{color: "#6b7280", fontStyle: "normal"}}>Unmatched mentions</em></span>
+            </div>
+            <table>
+              <thead><tr><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
+              <tbody>
+                {unmatched.map((q, i) => <NewsQuoteRow q={q} key={i} />)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>}
     </section>
   );
 }
