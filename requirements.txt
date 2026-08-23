@@ -1,0 +1,5 @@
+psycopg2-binary
+feedparser
+requests
+faster-whisper
+python-dotenv
