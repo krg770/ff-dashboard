@@ -387,4 +387,14 @@ one-off INSERTs) is still TBD — pending the user's example set.
   phonetic spelling of "Sadiq" didn't clear the trigram similarity
   threshold against the real name. Quote content ("most physically
   gifted tight ends we've ever seen") also confirms the TE. Added alias,
-  backfilled the quote.
+  backfilled the quote. **Turned out to expose a second, unrelated bug**:
+  the user still saw it as "unmatched" after this fix because
+  `/api/news` had a hardcoded `LIMIT 50` left over from when only one
+  podcast (a handful of quotes/week) existed. With 4 podcasts now
+  processed, this content week has 175 quotes — the cap was silently
+  dropping 125 of them, Sadiq's among them, with no indication anywhere
+  that data was missing. Removed the limit entirely (News is meant to
+  surface everything, not a top-N leaderboard, unlike Hot/Cold, Waiver,
+  Trade, and Stream widgets which intentionally keep their `LIMIT`s —
+  those are legitimately top-N by design). Player-group count in the UI
+  went from 45 to 119 immediately after the fix.
