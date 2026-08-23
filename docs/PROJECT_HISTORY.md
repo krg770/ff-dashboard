@@ -120,3 +120,32 @@ as of 2026-08-23 (Whisper mis-transcriptions of player names):
 Chuba Hubbard, "Rashad White" → Rachaad White, "Josh Harris" → Najee
 Harris. A batch-import path for a larger correction list (rather than
 one-off INSERTs) is still TBD — pending the user's example set.
+
+### Corrections applied 2026-08-23
+
+- **"Stefan digs" → Stefon Diggs** — was matching "Fadil Diggs" (an
+  unrelated real player, LB on NO) via trigram similarity. Root cause was
+  bigger than a bad alias: **Stefon Diggs wasn't in the `players` table at
+  all.** He signed with Washington on 2026-08-05, and nflverse's seasonal
+  roster feed (`load_players.py`'s data source) hadn't picked up the move
+  yet — re-running the loader confirmed 0 new players. Manually inserted
+  him (id 2931, WAS/WR, `gsis_id` left `NULL`) plus aliases for "Stefon
+  Diggs" and the Whisper misspellings "Stefan Diggs"/"Stefan digs".
+  **Follow-up risk:** when nflverse's feed eventually includes him with a
+  real `gsis_id`, `load_players.py` matches existing rows by `gsis_id`, so
+  it won't find this manually-inserted row (`gsis_id IS NULL`) and will
+  insert a **duplicate** Stefon Diggs row instead of updating this one.
+  Needs a manual `gsis_id` backfill or a dedup pass once that happens.
+- **"Gangwell" → Kenneth Gainwell** (id 702, TB/RB) — added alias,
+  backfilled quote id 160.
+- **"Scattaboo" → Cam Skattebo** (id 2200, NYG/RB) — added alias,
+  backfilled quote id 209. A second quote (id 208, raw mention "Judkins
+  and Scattaboo") extracted *two* players' names as one combined mention
+  and is still unmatched — that's an extraction-prompt gap (it should
+  split multi-player mentions into separate array items), not something
+  an alias can fix. Left as-is pending a prompt update.
+- **"Patrick Wilholms" (quote id 181, currently mismatched to "Lucas
+  Patrick")** — unresolved. "Schaeffler" in that same quote is clearly a
+  mangled "Schefter" (Adam Schefter, the reporter — not a player), so
+  there's no reliable anchor to guess who "Wilholms" actually is. Waiting
+  on the user to identify the player before adding a correction.
