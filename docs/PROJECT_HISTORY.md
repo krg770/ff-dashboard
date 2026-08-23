@@ -73,22 +73,40 @@ hours from 8am–10pm:
 
 ## Podcast sources & processing status (as of 2026-08-23)
 
-- Only **one** podcast source is configured in the `podcasts` table so far:
-  "Fantasy Football Today" (`rss_url` set, `active = true`). The original
-  goal was 4 shows — the other 3 just need RSS feed URLs added as rows to
-  `podcasts`.
-- **3 episodes** have been fully downloaded, transcribed, and had quotes
-  extracted (`status = 'extracted'`), all from that one show. 2 of the 3
-  are missing a `processed_at` timestamp — they were run through an
-  earlier/manual pass before that tracking was fully wired in.
-- **2,990 episodes** from that same feed are marked `status = 'skipped'`
-  — that's the show's back-catalog (long-running daily show), deliberately
-  excluded rather than a processing failure.
+4 podcast sources are now configured in the `podcasts` table:
+
+| Show | RSS feed | Status |
+|---|---|---|
+| Fantasy Football Today (CBS Sports) | `rss.amperwave.net/...` | 3 episodes extracted |
+| RotoWire Fantasy Football With Theo Gremminger | `feeds.simplecast.com/D9lea_gL` | pilot episode queued |
+| Fantasy Footballers - Fantasy Football Podcast | `feeds.simplecast.com/sw7PGWfw` | pilot episode queued |
+| Locked On Fantasy Football with Fabs & Marcus | `feeds.simplecast.com/GKvIomw5` | pilot episode queued |
+
+A 5th URL the user pasted (`https://megaphone.fm`) is just the bare
+hosting platform, not a real per-show feed — skipped until the actual
+show's RSS URL is found.
+
 - The dashboard's Latest News table now shows a **Source** column (podcast
   name, air date, and processed/downloaded date) per item, added
   2026-08-23 — previously that info existed in the database
   (`episodes.published_at` / `processed_at`, `podcasts.name`) but wasn't
   surfaced anywhere in the UI.
+- **Backlog handling:** `poller.py` has no recency filter — polling a
+  freshly-added feed for the first time inserts its *entire* history as
+  `status = 'new'` (the 3 new feeds added ~4,400 episodes going back to
+  2014). After polling, episodes older than 7 days were bulk-marked
+  `status = 'skipped'` to avoid the pipeline trying to transcribe over a
+  decade of backlog. This isn't automated — it was a manual cleanup step
+  done once for these 3 feeds. Same pattern was apparently used earlier
+  for Fantasy Football Today (2,990 skipped there).
+- **Pilot run (2026-08-23):** rather than transcribe all 20 episodes from
+  the last 7 days across the 3 new shows at once (each episode is a real
+  chunk of wall-clock time — audio download, Whisper transcription, a
+  Claude extraction call — 20 could run 3-5+ hours), only the single
+  newest episode per new show was left as `status = 'new'` and run
+  through `worker.py` as a quality check; the other 17 were deferred
+  (marked `skipped`, not permanently excluded — flip back to `new` and
+  re-run `worker.py` to process them once the pilot looks good).
 
 ## Known gaps / next steps
 
