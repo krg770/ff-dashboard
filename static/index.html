@@ -376,25 +376,42 @@ function RoundFocus() {
 function Rankings() {
   const [data, loading] = useApi("/api/rankings", []);
   const updated = latestTimestamp(data, [r => r.fetched_at]);
+  const rounds = React.useMemo(() => {
+    const map = new Map();
+    for (const p of (data || []).slice(0, 50)) {
+      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
+      map.get(p.draft_round).push(p);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+  }, [data]);
+
   return (
-    <section>
+    <section className="grid-full">
       <h2>
         <span>Player Rankings (ADP)</span>
         <SectionUpdated timestamp={updated} />
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState /> :
-      <table>
-        <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Rd</th></tr></thead>
-        <tbody>
-          {data.slice(0, 50).map((p, i) => (
-            <tr key={i}>
-              <td>{p.full_name}</td><td>{p.team}</td><td>{p.position}</td>
-              <td>{p.adp}</td><td>{p.draft_round}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>}
+      <div>
+        {rounds.map(([round, players]) => (
+          <div className="news-group" key={round}>
+            <div className="news-group-header">
+              <span className="news-group-player">Round {round}</span>
+            </div>
+            <table>
+              <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th></tr></thead>
+              <tbody>
+                {players.map((p, i) => (
+                  <tr key={i}>
+                    <td>{p.full_name}</td><td>{p.team}</td><td>{p.position}</td><td>{p.adp}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>}
     </section>
   );
 }
