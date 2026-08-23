@@ -1,5 +1,27 @@
 # Project History
 
+## Project priorities (stated 2026-08-23)
+
+Explicit framing from the user: **the UI is barebones/functional by
+design right now, not a polish target.** The priority is getting the
+backend, data pipeline, and stats correct — matching accuracy, extraction
+quality, schema completeness, the pipeline actually running unattended.
+UI work should mainly serve verification ("can I see that this is
+working correctly") rather than aesthetics. Matches how the work has
+actually gone: most of this session was fixing matching bugs, pipeline
+mechanics, and data-completeness issues (the News 50-item cap, missing
+players, duplicate names) rather than visual design.
+
+**Future direction, not yet scoped**: as the dataset grows (more
+podcasts, more weeks), the user wants AI-assisted querying over it — the
+ability to ask questions of the data directly (e.g. "how often has this
+podcast's injury calls been directionally right?", "show me every quote
+about X across all shows") rather than only browsing pre-built dashboard
+sections. Distinct from the reliability-tracking work above, though
+related. Not much to design yet: with only 4 podcasts and ~1 week of
+data, there isn't enough volume for this to be useful — worth revisiting
+once the dataset is substantially bigger.
+
 ## Concept
 
 Claude listens to fantasy football podcasts and turns them into content for a
