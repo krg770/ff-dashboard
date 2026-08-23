@@ -6,6 +6,7 @@ Usage:
     uvicorn main:app --reload --port 8000
 Then open http://localhost:8000 in a browser.
 """
+from collections import defaultdict
 from datetime import date, timedelta
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,10 @@ app.add_middleware(
 )
 
 SEASON = 2026
+# Minimum quote count within a single run before a player is called out as
+# the "top" riser/faller for that run - avoids surfacing a one-off mention
+# as if it were a consensus signal.
+MIN_RUN_MENTIONS = 2
 
 
 def dict_rows(cur):
@@ -100,7 +105,26 @@ def get_latest_run():
 
     cur.close()
     conn.close()
-    return {"episodes": episodes, "quotes": quotes}
+
+    counts = defaultdict(lambda: {"rising": 0, "falling": 0})
+    for q in quotes:
+        if not q["full_name"] or q["sentiment"] not in ("rising", "falling"):
+            continue
+        counts[q["full_name"]][q["sentiment"]] += 1
+
+    def top(sentiment):
+        candidates = [(name, c[sentiment]) for name, c in counts.items() if c[sentiment] >= MIN_RUN_MENTIONS]
+        if not candidates:
+            return None
+        name, count = max(candidates, key=lambda nc: nc[1])
+        return {"full_name": name, "mention_count": count}
+
+    return {
+        "episodes": episodes,
+        "quotes": quotes,
+        "top_riser": top("rising"),
+        "top_faller": top("falling"),
+    }
 
 
 @app.get("/api/rankings")
@@ -215,6 +239,7 @@ def get_injuries():
 def get_hot_cold():
     conn = get_conn()
     cur = conn.cursor()
+    week = current_content_week()
     cur.execute(
         """
         WITH ranked AS (
@@ -222,19 +247,36 @@ def get_hot_cold():
                    ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY week DESC) AS rn
             FROM player_stats
             WHERE stat_name = 'snap_pct' AND season = %s
+        ),
+        buzz AS (
+            -- Distinct podcasts, not raw quote count: 3 mentions from one
+            -- show repeating itself isn't the same signal as 3 different
+            -- shows independently converging on the same read.
+            SELECT q.player_id,
+                   COUNT(DISTINCT e.podcast_id) AS podcast_count,
+                   COUNT(*) FILTER (WHERE q.sentiment = 'rising') AS rising_count,
+                   COUNT(*) FILTER (WHERE q.sentiment = 'falling') AS falling_count
+            FROM quotes q
+            JOIN episodes e ON q.episode_id = e.id
+            WHERE q.content_week = %s AND q.player_id IS NOT NULL
+            GROUP BY q.player_id
         )
         SELECT p.full_name, p.team, p.position,
                latest.stat_value AS current_snap_pct,
                prior.stat_value AS prior_snap_pct,
-               (latest.stat_value - prior.stat_value) AS delta
+               (latest.stat_value - prior.stat_value) AS delta,
+               COALESCE(buzz.podcast_count, 0) AS buzz_podcast_count,
+               COALESCE(buzz.rising_count, 0) AS buzz_rising_count,
+               COALESCE(buzz.falling_count, 0) AS buzz_falling_count
         FROM ranked latest
         JOIN ranked prior ON prior.player_id = latest.player_id AND prior.rn = 2
         JOIN players p ON p.id = latest.player_id
+        LEFT JOIN buzz ON buzz.player_id = p.id
         WHERE latest.rn = 1
         ORDER BY ABS(latest.stat_value - prior.stat_value) DESC
         LIMIT 30
         """,
-        (SEASON,),
+        (SEASON, week),
     )
     result = dict_rows(cur)
     cur.close()

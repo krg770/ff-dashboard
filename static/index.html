@@ -99,6 +99,10 @@
   .section-updated { font-size: 10px; color: #6b7280; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; }
   .section-header-right { display: flex; align-items: center; gap: 8px; }
   .new-badge { display: inline-block; background: #1e3a5f; color: #60a5fa; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 4px; letter-spacing: 0.5px; vertical-align: middle; }
+  .buzz-callout { display: flex; gap: 16px; margin-top: 6px; flex-wrap: wrap; }
+  .buzz-callout-item { font-size: 12px; }
+  .buzz-callout-item.rising strong { color: #4ade80; }
+  .buzz-callout-item.falling strong { color: #f87171; }
   select, input {
     background: #1e2129; color: #e4e6eb; border: 1px solid #2a2e37;
     border-radius: 4px; padding: 4px 8px; font-size: 12px;
@@ -173,6 +177,15 @@ function NewBadge({ timestamp }) {
   return <span className="new-badge">NEW</span>;
 }
 
+function BuzzBadge({ podcastCount, risingCount, fallingCount }) {
+  if (!podcastCount) return <span style={{color: "#4b5060"}}>—</span>;
+  let cls = "mixed";
+  if (risingCount > fallingCount) cls = "rising";
+  else if (fallingCount > risingCount) cls = "falling";
+  const label = podcastCount === 1 ? "1 show" : `${podcastCount} shows`;
+  return <span className={"badge " + cls}>{label}</span>;
+}
+
 function SentimentBadge({ sentiment }) {
   if (!sentiment) return null;
   return <span className={"badge " + sentiment}>{sentiment}</span>;
@@ -203,6 +216,20 @@ function LatestUpdate() {
         {quotes.length} quote(s) found
         {mostRecent && <> — most recent: <strong>{mostRecent.title}</strong></>}
       </div>
+      {(data.top_riser || data.top_faller) && (
+        <div className="buzz-callout">
+          {data.top_riser && (
+            <span className="buzz-callout-item rising">
+              🔺 Most talked-about riser: <strong>{data.top_riser.full_name}</strong> ({data.top_riser.mention_count} mentions this run)
+            </span>
+          )}
+          {data.top_faller && (
+            <span className="buzz-callout-item falling">
+              🔻 Most talked-about faller: <strong>{data.top_faller.full_name}</strong> ({data.top_faller.mention_count} mentions this run)
+            </span>
+          )}
+        </div>
+      )}
       {injuryQuotes.length > 0 && (
         <div>
           <div className="injury-alert-header">⚠ NEW INJURY NEWS ({injuryQuotes.length})</div>
@@ -347,7 +374,7 @@ function SimpleTable({ endpoint, title, columns, emptyText, timestampKey }) {
         <tbody>
           {data.map((row, i) => (
             <tr key={i}>
-              {columns.map(c => <td key={c.key}>{row[c.key]}</td>)}
+              {columns.map(c => <td key={c.key}>{c.render ? c.render(row) : row[c.key]}</td>)}
               {timestampKey && <td><NewBadge timestamp={row[timestampKey]} /></td>}
             </tr>
           ))}
@@ -376,7 +403,13 @@ function InSeasonTab() {
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"report_status",label:"Status"},{key:"practice_status",label:"Practice"}]}
         emptyText={waiting} timestampKey="fetched_at" />
       <SimpleTable endpoint="/api/hot_cold" title="Hot / Cold Meter"
-        columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"current_snap_pct",label:"Snap %"},{key:"delta",label:"Trend"}]}
+        columns={[
+          {key:"full_name",label:"Player"},{key:"team",label:"Team"},
+          {key:"current_snap_pct",label:"Snap %"},{key:"delta",label:"Trend"},
+          {key:"buzz_podcast_count",label:"Buzz",render: row => (
+            <BuzzBadge podcastCount={row.buzz_podcast_count} risingCount={row.buzz_rising_count} fallingCount={row.buzz_falling_count} />
+          )},
+        ]}
         emptyText={waiting} />
       <SimpleTable endpoint="/api/waiver_adds" title="Waiver Must-Adds"
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"snap_trend",label:"Snap Trend"},{key:"adp",label:"ADP"}]}
