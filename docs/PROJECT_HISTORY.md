@@ -252,6 +252,16 @@ episodes get processed.
 after, for visual consistency with Round Focus — "Round 1" / "Round 2" /
 etc. section headers instead of a plain "Rd" column in a flat table.
 
+**Made collapsible right after that** — both Rankings and Round Focus:
+round sections now default to only Round 1 expanded, click any round
+header to expand/collapse it (arrow indicator + player count in the
+header). Round Focus's dropdown (fetch-one-round-at-a-time) was replaced
+entirely — `/api/round_focus`'s `round` query param is now optional; when
+omitted it returns all rounds at once (capped to round ≤ 16, matching the
+old dropdown's range, to avoid ~24 "rounds" worth of barely-drafted
+players), and the frontend groups/collapses client-side the same way
+Rankings does.
+
 ## Source reliability tracking (future initiative, scoped 2026-08-23)
 
 Vision: identify which shows break news first vs. which just repeat what
