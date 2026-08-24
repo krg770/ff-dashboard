@@ -488,6 +488,34 @@ resolving via `PATH` (this script has no `claude` CLI dependency like
 using the venv's absolute interpreter path sidesteps PATH resolution
 questions entirely regardless).
 
+## Trends tab: sentiment trajectory + recent buzz digest (2026-08-24)
+
+First two of the season-long-data ideas discussed, built in order per the
+user's request (ADP loader → idea 1 → idea 2). **Both are 100% real
+data** - no mock/fake data used anywhere in this tab, so no experimental
+banner needed (the user asked to call out fake data in the header if any
+existed; none does here).
+
+- **Sentiment Trajectory by Week** (`/api/sentiment_trend`) - rising/
+  falling/neutral quote counts per player per `content_week`, for players
+  with history in 2+ distinct weeks (a single week isn't a trend). With
+  only 2 real weeks of data so far, 21 players already qualify - e.g.
+  Christian Watson visibly arcing from 1 falling/1 neutral last week to
+  2 rising this week. Grows automatically as more weeks accumulate;
+  nothing to backfill.
+- **Recent Buzz digest** (`/api/recent_buzz?weeks=3`) - same shape as
+  `/api/news` (podcast, air date, tags, fantasy_relevance, etc.) but
+  widens the filter from "this content_week only" to the last N weeks
+  (default 3, shrinks gracefully if fewer exist). Reuses the exact same
+  frontend grouping components already built for the News tab
+  (`groupNewsByPlayer`, `NewsQuoteRow`, `BuzzBadge`) rather than
+  duplicating that logic - the only real difference is the backend query
+  window. Framed for in-season start/sit calls, where one isolated
+  mention this week undersells a player who's had sustained multi-week
+  buzz building.
+
+Both live in a new **Trends** tab.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
