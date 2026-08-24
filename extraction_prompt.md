@@ -69,6 +69,18 @@ ambiguity in `fantasy_relevance` instead of guessing. An incorrect
 "injury" tag on a healthy player is a serious error that could cause
 someone to bench a player who doesn't need to be benched.
 
+CRITICAL DISTINCTION - relief from a worse fear is not "rising":
+When news downgrades an injury from a worst-case fear to something less
+severe ("feared season-ending, actually just a sprain," "X-rays came
+back negative," "not considered long-term"), the player is still hurt.
+That is NOT bullish/"rising" sentiment just because it could have been
+worse - the underlying reality is still an injury with real uncertainty
+(missed practice time, unclear return timeline). Tag this "neutral"
+(or still "falling" if real missed time is still likely), not "rising".
+Reserve "rising" for news that actually improves the outlook relative to
+a healthy baseline - e.g. "fully practicing," "cleared to play," "no
+concerns entering Week 1" - not merely "less catastrophic than feared."
+
 Prioritize: injury status changes, depth chart movement, target/touch
 share shifts, coaching staff comments on usage, rookie evaluations,
 sleeper/bust calls, and waiver wire recommendations.
