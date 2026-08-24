@@ -703,6 +703,28 @@ directly again outside of testing a specific fix in isolation - check
 `flock -n /tmp/ff_pipeline.lock` wrapper cron uses, so a manual run can't
 collide with a scheduled one.
 
+## "Relief from a worse fear" was mistagged as rising sentiment (2026-08-24)
+
+Same conversation as the duplicate-extraction bug above, but a genuinely
+separate finding once the duplicate was cleared out of the way. The
+user's original flag was about the **Ashton Jeanty ankle quotes**
+specifically ("Gentie is believed to have sprained his ankle and it is
+not considered a long-term injury") - both tagged `rising`, both
+correctly read by the user as neutral-at-worst: he's still injured, just
+not as badly as the worst fear. "Less catastrophic than feared" isn't
+the same as "good news," and the extraction prompt had no guidance
+distinguishing the two - it apparently defaulted toward "rising" for any
+injury update framed with relief/downgrade language.
+
+Fixed both the data and the root cause:
+- Corrected quotes 406 and 451 from `rising` to `neutral`.
+- Added a new CRITICAL block to `extraction_prompt.md` (same style as
+  the existing injury/injury_beneficiary distinction): relief from a
+  worse-case fear should be tagged `neutral` (or `falling` if real missed
+  time is still likely), not `rising`. `rising` is reserved for news that
+  actually improves the outlook relative to a healthy baseline (fully
+  practicing, cleared to play), not merely "could have been worse."
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
