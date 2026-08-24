@@ -614,6 +614,45 @@ re-running `load_players.py`: `St. Brown`, `Beckham Jr.`, `Van Ginkel`,
 `Godwin Jr.` all now resolve at `high` confidence via exact alias match
 instead of a risky fuzzy guess.
 
+## Salary tab reworked after a real mock-draft test (2026-08-24)
+
+User ran an actual mock salary draft against the tab and found the Round
+grouping "didn't seem right." Diagnosis: Round grouping is a snake-draft
+concept - pick order doesn't exist in an auction, so it never mapped to
+how auction drafters actually think. Within-round ordering was already
+correct (ADP ascending = value descending, since the value formula is
+strictly monotonic in ADP rank) - the container was the problem, not the
+sort.
+
+- **Regrouped by position** (`SALARY_POSITION_ORDER = ["RB", "WR", "QB",
+  "TE", "K", "DEF"]`, RB/WR first since they eat the most auction budget
+  in single-QB PPR) instead of round. Matches how real auction cheat
+  sheets are organized and how drafters actually budget ("how much do I
+  have left for RB depth").
+- **Added a Value Movers callout** - top 8 (by dollar value)
+  `pay_up`/`pay_down` players as a "bid above sticker" / "bargain watch"
+  quick-scan, using the pay-meter data that already existed per-player
+  but wasn't surfaced as a standalone highlight. Deliberately kept as a
+  *secondary* view, not the primary sort - value-descending stays the
+  main list because that's the number you're constantly checking against
+  remaining budget mid-draft; burying it under a buzz-based sort would
+  lose the anchor you need most in the moment.
+- **Multi-source ADP blending was raised and explicitly deprioritized**
+  by the user, not built: "we're more of an information gathering site
+  ... filtering and navigating is going to be the most important part."
+  Also worth noting as a real constraint if this comes back up: Fantasy
+  Football Calculator (the current source) is used specifically because
+  it's free with no API key - other major ADP sources (FantasyPros, ESPN,
+  Yahoo) don't have equivalent free structured endpoints.
+
+**Product direction stated here, worth carrying forward**: this is
+positioned as an information-gathering tool - the priority for future UI
+investment is filtering and navigation (letting the user pull exactly
+what they need), not visual polish and not blending more data sources
+for their own sake. Consistent with the earlier "backend/data correctness
+over UI polish" framing, refined: filtering/navigation *is* real UI
+investment worth making eventually, just not aesthetics.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
