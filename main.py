@@ -268,6 +268,66 @@ def get_reliability():
     }
 
 
+@app.get("/api/sentiment_trend")
+def get_sentiment_trend():
+    """
+    Real data only - no mocking here. Sentiment mix (rising/falling/
+    neutral mention counts) per player per content_week, for players with
+    quotes in 2+ distinct weeks (a single week isn't a trend). Naturally
+    grows more useful as more weeks accumulate; nothing to backfill or
+    fake in the meantime.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT q.player_id, p.full_name, p.team, p.position, q.content_week,
+               COUNT(*) FILTER (WHERE q.sentiment = 'rising') AS rising,
+               COUNT(*) FILTER (WHERE q.sentiment = 'falling') AS falling,
+               COUNT(*) FILTER (WHERE q.sentiment = 'neutral') AS neutral,
+               COUNT(DISTINCT e.podcast_id) AS podcast_count
+        FROM quotes q
+        JOIN players p ON q.player_id = p.id
+        JOIN episodes e ON q.episode_id = e.id
+        WHERE q.player_id IS NOT NULL
+        GROUP BY q.player_id, p.full_name, p.team, p.position, q.content_week
+        ORDER BY q.content_week ASC
+        """
+    )
+    rows = dict_rows(cur)
+    cur.close()
+    conn.close()
+
+    by_player = defaultdict(list)
+    for r in rows:
+        by_player[r["player_id"]].append(r)
+
+    all_weeks = sorted({str(r["content_week"]) for r in rows})
+
+    players = []
+    for player_id, weekrows in by_player.items():
+        if len(weekrows) < 2:
+            continue
+        first = weekrows[0]
+        weeks = {
+            str(r["content_week"]): {
+                "rising": r["rising"], "falling": r["falling"],
+                "neutral": r["neutral"], "podcast_count": r["podcast_count"],
+            }
+            for r in weekrows
+        }
+        total_mentions = sum(w["rising"] + w["falling"] + w["neutral"] for w in weeks.values())
+        players.append({
+            "player_id": player_id, "full_name": first["full_name"],
+            "team": first["team"], "position": first["position"],
+            "weeks": weeks, "total_mentions": total_mentions,
+        })
+
+    players.sort(key=lambda p: -p["total_mentions"])
+
+    return {"weeks": all_weeks, "players": players}
+
+
 @app.get("/api/rankings")
 def get_rankings():
     conn = get_conn()

@@ -724,6 +724,53 @@ const MOCK_ACCURACY_DATA = [
   { podcast: "Locked On Fantasy Football", sample_calls: 8, hit_rate: 0.63 },
 ];
 
+function TrendWeekCell({ week }) {
+  if (!week || (week.rising === 0 && week.falling === 0 && week.neutral === 0)) {
+    return <span style={{color: "#4b5060"}}>—</span>;
+  }
+  return (
+    <span style={{whiteSpace: "nowrap"}}>
+      {week.rising > 0 && <span className="badge rising" style={{marginRight: 3}}>{week.rising}↑</span>}
+      {week.falling > 0 && <span className="badge falling" style={{marginRight: 3}}>{week.falling}↓</span>}
+      {week.neutral > 0 && <span className="badge neutral">{week.neutral}=</span>}
+    </span>
+  );
+}
+
+function SentimentTrendTab() {
+  const [data, loading] = useApi("/api/sentiment_trend", []);
+  return (
+    <div>
+      <section className="grid-full">
+        <h2><span>Sentiment Trajectory by Week (real data)</span></h2>
+        {loading ? <EmptyState text="Loading..." /> :
+         (!data || data.players.length === 0) ? <EmptyState text="Not enough multi-week history yet — check back after a few more weeks of episodes" /> :
+        <div>
+          <div style={{padding: "10px 12px", fontSize: 12, color: "#9099a8"}}>
+            Players mentioned in 2+ different weeks, sorted by total mentions. {data.weeks.length} week(s) of history so far — gets more useful as more weeks accumulate.
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Player</th><th>Team</th><th>Pos</th>
+                {data.weeks.map(w => <th key={w}>{w}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {data.players.map((p, i) => (
+                <tr key={i}>
+                  <td>{p.full_name}</td><td>{p.team}</td><td>{p.position}</td>
+                  {data.weeks.map(w => <td key={w}><TrendWeekCell week={p.weeks[w]} /></td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+      </section>
+    </div>
+  );
+}
+
 function ReliabilityTab() {
   const [data, loading] = useApi("/api/reliability", []);
 
@@ -850,12 +897,14 @@ function App() {
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
         <div className={"tab " + (tab === "salary" ? "active" : "")} onClick={() => setTab("salary")}>Salary</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
+        <div className={"tab " + (tab === "trends" ? "active" : "")} onClick={() => setTab("trends")}>Trends</div>
         <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
       </div>
       <main>
         {tab === "draft" ? <DraftTab /> :
          tab === "salary" ? <SalaryTab /> :
-         tab === "season" ? <InSeasonTab /> : <ReliabilityTab />}
+         tab === "season" ? <InSeasonTab /> :
+         tab === "trends" ? <SentimentTrendTab /> : <ReliabilityTab />}
       </main>
     </React.Fragment>
   );
