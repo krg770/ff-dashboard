@@ -136,6 +136,12 @@
   .dev-panel-table { width: auto; margin-top: 4px; font-size: 10.5px; }
   .dev-panel-table th, .dev-panel-table td { padding: 3px 10px 3px 0; border: none; color: #9099a8; }
   .dev-panel-table th { color: #6b7280; text-transform: none; }
+  .value-movers { display: flex; gap: 20px; padding: 4px 12px 14px; flex-wrap: wrap; }
+  .value-movers-col { flex: 1; min-width: 240px; }
+  .value-movers-title { font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+  .value-movers-title.rising { color: #4ade80; }
+  .value-movers-title.falling { color: #f87171; }
+  .value-movers-row { font-size: 12px; padding: 3px 0; border-bottom: 1px solid #1e2129; }
   .experimental-banner {
     background: #2a2210; border: 1px solid #4a3a10; color: #fbbf24;
     padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 12px;
@@ -471,27 +477,64 @@ function PayMeterBadge({ payMeter }) {
   return <span className={"badge " + cls}>{label}</span>;
 }
 
+const SALARY_POSITION_ORDER = ["RB", "WR", "QB", "TE", "K", "DEF"];
+
+function ValueMoversCallout({ players }) {
+  const payUp = players.filter(p => p.pay_meter === "pay_up").sort((a, b) => b.auction_value - a.auction_value).slice(0, 8);
+  const payDown = players.filter(p => p.pay_meter === "pay_down").sort((a, b) => b.auction_value - a.auction_value).slice(0, 8);
+  if (payUp.length === 0 && payDown.length === 0) return null;
+
+  return (
+    <section className="grid-full">
+      <h2><span>Value Movers</span></h2>
+      <div style={{padding: "10px 12px", fontSize: 12, color: "#9099a8"}}>
+        Highest-value players with a net rising or falling podcast-buzz signal this week — the sticker price below is ADP-derived and doesn't know about this yet.
+      </div>
+      <div className="value-movers">
+        {payUp.length > 0 && (
+          <div className="value-movers-col">
+            <div className="value-movers-title rising">🔥 Bid above sticker — recent positive buzz</div>
+            {payUp.map((p, i) => (
+              <div key={i} className="value-movers-row"><strong>{p.full_name}</strong> ({p.position}) — ${p.auction_value}</div>
+            ))}
+          </div>
+        )}
+        {payDown.length > 0 && (
+          <div className="value-movers-col">
+            <div className="value-movers-title falling">❄️ Bargain watch — recent negative buzz</div>
+            {payDown.map((p, i) => (
+              <div key={i} className="value-movers-row"><strong>{p.full_name}</strong> ({p.position}) — ${p.auction_value}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SalaryTab() {
   const [resp, loading] = useApi("/api/salary", []);
-  const [expanded, setExpanded] = useState(() => new Set([1]));
+  const [expanded, setExpanded] = useState(() => new Set(["RB"]));
   const players = resp ? resp.players : null;
   const updated = latestTimestamp(
     (players || []).flatMap(p => p.weekly_quotes || []),
     [q => q.created_at]
   );
-  const rounds = React.useMemo(() => {
+  const positions = React.useMemo(() => {
     const map = new Map();
     for (const p of (players || [])) {
-      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
-      map.get(p.draft_round).push(p);
+      if (!map.has(p.position)) map.set(p.position, []);
+      map.get(p.position).push(p);
     }
-    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+    const known = SALARY_POSITION_ORDER.filter(pos => map.has(pos)).map(pos => [pos, map.get(pos)]);
+    const rest = Array.from(map.entries()).filter(([pos]) => !SALARY_POSITION_ORDER.includes(pos));
+    return known.concat(rest);
   }, [players]);
 
-  const toggleRound = (round) => {
+  const togglePosition = (pos) => {
     setExpanded(prev => {
       const next = new Set(prev);
-      if (next.has(round)) next.delete(round); else next.add(round);
+      if (next.has(pos)) next.delete(pos); else next.add(pos);
       return next;
     });
   };
@@ -506,33 +549,33 @@ function SalaryTab() {
         pool splits by ADP rank on a decay curve. Treat as a reasonable
         starting estimate, not gospel.
       </div>
+      {players && <ValueMoversCallout players={players} />}
       <section className="grid-full">
         <h2>
-          <span>Salary ({resp ? `${resp.league_teams}-Team, $${resp.league_budget}` : "10-Team, $200"})</span>
+          <span>Salary ({resp ? `${resp.league_teams}-Team, $${resp.league_budget}` : "10-Team, $200"}) — by position</span>
           <SectionUpdated timestamp={updated} />
         </h2>
         {loading ? <EmptyState text="Loading..." /> :
          (!players || players.length === 0) ? <EmptyState text="No players yet" /> :
         <div>
-          {rounds.map(([round, roundPlayers]) => {
-            const isOpen = expanded.has(round);
+          {positions.map(([pos, posPlayers]) => {
+            const isOpen = expanded.has(pos);
             return (
-            <div className="news-group" key={round}>
-              <div className="news-group-header clickable" onClick={() => toggleRound(round)}>
+            <div className="news-group" key={pos}>
+              <div className="news-group-header clickable" onClick={() => togglePosition(pos)}>
                 <span className="news-group-player">
-                  <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Round {round}
+                  <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> {pos}
                 </span>
-                <span className="round-count">{roundPlayers.length} players</span>
+                <span className="round-count">{posPlayers.length} players</span>
               </div>
               {isOpen &&
               <table>
-                <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Value</th><th>Pay Meter</th><th>Podcast Buzz This Week</th></tr></thead>
+                <thead><tr><th>Player</th><th>Team</th><th>ADP</th><th>Value</th><th>Pay Meter</th><th>Podcast Buzz This Week</th></tr></thead>
                 <tbody>
-                  {roundPlayers.map((p, i) => (
+                  {posPlayers.map((p, i) => (
                     <tr key={i}>
                       <td>{p.full_name}</td>
                       <td>{p.team}</td>
-                      <td>{p.position}</td>
                       <td>{p.adp}</td>
                       <td>${p.auction_value}</td>
                       <td><PayMeterBadge payMeter={p.pay_meter} /></td>
