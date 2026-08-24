@@ -399,6 +399,56 @@ instead of ADP rounds alone.
 - `LEAGUE_TEAMS`, `LEAGUE_BUDGET`, `ROSTER_SPOTS`, `MIN_BID` are constants
   in `main.py` - update those if the league's actual settings differ.
 
+## Cron pipeline was silently broken since it started (fixed 2026-08-24)
+
+User noticed the "Latest update" bar was still showing 8/23 data despite
+the dev panel confirming the poller had found new episodes today
+(8/24, Monday) — and no new data was showing up anywhere (Draft, Salary,
+Reliability tabs). This looked at first like a display bug but wasn't.
+
+**Root cause**: `worker.py`'s extraction step shells out to the `claude`
+CLI (`subprocess.run(["claude", "-p", prompt], ...)`), which lives at
+`/home/krg77/.local/bin/claude`. `run_pipeline.sh` only ever added
+`~/.npm-global/bin` to `PATH`, never `~/.local/bin`. That's invisible
+when running things interactively (an interactive shell's default PATH
+already includes `~/.local/bin`), but cron runs the script with a
+minimal environment — so every single episode processed via cron since
+the schedule went live failed with
+`[Errno 2] No such file or directory: 'claude'`. Confirmed via
+`pipeline.log`: **every scheduled run today (8am, 10am, noon, 2pm) that
+found a new episode failed the same way** — `pipeline_status` still
+reported the run as "completed" (2 episodes done) because the
+episodes_done_this_run counter increments in a `finally` block
+regardless of success/failure, which is exactly why the dashboard looked
+like nothing was wrong at the pipeline-status level while zero real data
+was landing.
+
+**Fix**: `run_pipeline.sh` now also adds `~/.local/bin` to `PATH`.
+Verified by simulating cron's minimal environment directly
+(`env -i ... which claude`) before trusting it, not just re-running and
+hoping. The 4 episodes that failed today were reset from `status='error'`
+back to `'new'` and reprocessed.
+
+**Process note**: editing `run_pipeline.sh` through the Edit tool (over
+the `\\wsl.localhost` UNC path) stripped its executable bit — had to
+`chmod +x` it again before it would run. Worth checking `ls -la` on any
+`.sh` file in this repo after editing it this way, not just after this
+one incident.
+
+**Also worth noting**: `pipeline_status.episodes_done_this_run`
+incrementing on failure as well as success (by design - it tracks "run
+progress," not "run success") means the dev panel's `is_running` /
+"last run finished" fields alone can't tell you a run actually worked.
+The per-podcast episode status breakdown (`error` column) is the
+field that actually reveals this - worth checking that column
+specifically, not just whether a run "finished."
+
+**Also added same day**: injury news rows now show source podcast, air
+date, and "reported Xh/d ago" (via `q.created_at`) so it's clear how
+current each item is — was previously missing entirely from the
+`/api/latest_run` injury rows even though the same info already existed
+elsewhere (News table's Source column).
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
