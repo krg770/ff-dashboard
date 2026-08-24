@@ -113,9 +113,13 @@ def get_latest_run():
 
     cur.execute(
         """
-        SELECT q.episode_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence, q.fantasy_relevance
+        SELECT q.episode_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence,
+               q.fantasy_relevance, q.created_at,
+               pod.name AS source_podcast, e.published_at AS source_published_at
         FROM quotes q
         LEFT JOIN players p ON q.player_id = p.id
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
         WHERE q.episode_id = ANY(%s)
         ORDER BY q.created_at DESC
         """,

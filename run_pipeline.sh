@@ -3,7 +3,7 @@
 # polls for new episodes, processes them. Triggered by Windows Task
 # Scheduler via: wsl.exe -d Ubuntu -e /home/krg77/ff-dashboard/run_pipeline.sh
 
-export PATH=~/.npm-global/bin:$PATH
+export PATH=~/.npm-global/bin:~/.local/bin:$PATH
 
 LOG_FILE=~/ff-dashboard/pipeline.log
 echo "=== Run started: $(date) ===" >> "$LOG_FILE"

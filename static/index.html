@@ -41,8 +41,9 @@
   }
   .injury-alert-header.clickable { cursor: pointer; user-select: none; }
   .injury-alert-header.clickable:hover { color: #fca5a5; }
-  .injury-alert-row { font-size: 12px; margin-bottom: 3px; }
+  .injury-alert-row { font-size: 12px; margin-bottom: 6px; }
   .injury-alert-row strong { color: #e4e6eb; }
+  .injury-alert-meta { font-size: 10px; color: #6b7280; margin-top: 1px; }
   .tabs { display: flex; gap: 4px; padding: 0 20px; background: #14161c; border-bottom: 1px solid #2a2e37; }
   .tab {
     padding: 10px 16px;
@@ -302,6 +303,11 @@ function LatestUpdate() {
             <div key={i} className="injury-alert-row">
               <strong>{q.full_name || "Unmatched player"}:</strong> {q.quote_text}
               {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
+              <div className="injury-alert-meta">
+                {q.source_podcast && <>{q.source_podcast} — </>}
+                {q.source_published_at && <>aired {new Date(q.source_published_at).toLocaleDateString()} — </>}
+                {q.created_at && <>reported {timeAgo(q.created_at)}</>}
+              </div>
             </div>
           ))}
         </div>
