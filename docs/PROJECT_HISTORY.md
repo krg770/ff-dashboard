@@ -449,6 +449,45 @@ current each item is — was previously missing entirely from the
 `/api/latest_run` injury rows even though the same info already existed
 elsewhere (News table's Source column).
 
+## ADP history + a real latent bug found fixing it (2026-08-24)
+
+Wiring up periodic ADP loading (needed for the season-long trend features
+below) surfaced a real, live bug: `load_adp.py`'s upsert targeted
+`ON CONFLICT (player_id, source, rank_type, season, week)`, but ADP rows
+always have `week = NULL`. **Postgres treats `NULL <> NULL` for
+uniqueness purposes**, so that constraint never actually prevented
+duplicates when `week IS NULL` - it just happened to never matter before
+because the loader had only ever been run once, ever (confirmed: 1
+distinct `fetched_at` in `rankings` before this). Re-running it manually
+to test immediately created **235 duplicate rows** in the live
+`rankings` table - the same table every other endpoint (Rankings, Round
+Focus, Salary, Hot/Cold) queries expecting one row per player.
+
+Fixed properly, not just worked around:
+
+- Deduplicated the existing rows (kept the most recent per player).
+- Added `rankings_current_adp_idx`, a **partial unique index** on
+  `(player_id, source, rank_type, season) WHERE week IS NULL` - this
+  sidesteps the NULL-uniqueness problem entirely (the nullable column
+  isn't part of the index key, and the `WHERE week IS NULL` predicate
+  scopes it to exactly the case that matters).
+- Updated `load_adp.py`'s `ON CONFLICT` target to match. Verified by
+  running it twice in a row afterward and confirming the row count
+  stayed at 244 with zero duplicates.
+
+New **`adp_history`** table (append-only, no unique constraint - a
+snapshot per run) is what actually makes ADP-drift-over-time possible.
+`rankings` itself still holds only the current/latest ADP, unchanged
+behavior for every existing endpoint.
+
+**Scheduled weekly**: `0 6 * * 1` (Mondays 6am, ahead of the main
+pipeline's first 8am run to avoid resource contention) - calls
+`venv/bin/python load_adp.py` directly rather than relying on `python`
+resolving via `PATH` (this script has no `claude` CLI dependency like
+`worker.py` does, so it wasn't at risk of the cron PATH bug above, but
+using the venv's absolute interpreter path sidesteps PATH resolution
+questions entirely regardless).
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
