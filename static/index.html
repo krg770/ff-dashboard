@@ -737,6 +737,40 @@ function TrendWeekCell({ week }) {
   );
 }
 
+function RecentBuzzSection() {
+  const [data, loading] = useApi("/api/recent_buzz?weeks=3", []);
+  const { grouped, unmatched } = React.useMemo(() => groupNewsByPlayer((data && data.quotes) || []), [data]);
+
+  return (
+    <section className="grid-full">
+      <h2>
+        <span>Recent Buzz — Last {data ? data.weeks_included.length : "3"} Week(s) (real data)</span>
+      </h2>
+      {loading ? <EmptyState text="Loading..." /> :
+       (!data || data.quotes.length === 0) ? <EmptyState text="No quotes yet" /> :
+      <div>
+        <div style={{padding: "10px 12px", fontSize: 12, color: "#9099a8"}}>
+          Rolls up {data.weeks_included.join(", ")} instead of just this week — useful for start/sit calls where sustained buzz across weeks matters more than one isolated mention.
+        </div>
+        {grouped.map((g, gi) => (
+          <div className="news-group" key={gi}>
+            <div className="news-group-header">
+              <span className="news-group-player">{g.name}</span>
+              <BuzzBadge podcastCount={g.podcastCount} risingCount={g.risingCount} fallingCount={g.fallingCount} />
+            </div>
+            <table>
+              <thead><tr><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
+              <tbody>
+                {g.quotes.map((q, i) => <NewsQuoteRow q={q} key={i} />)}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>}
+    </section>
+  );
+}
+
 function SentimentTrendTab() {
   const [data, loading] = useApi("/api/sentiment_trend", []);
   return (
@@ -767,6 +801,7 @@ function SentimentTrendTab() {
           </table>
         </div>}
       </section>
+      <RecentBuzzSection />
     </div>
   );
 }

@@ -328,6 +328,47 @@ def get_sentiment_trend():
     return {"weeks": all_weeks, "players": players}
 
 
+@app.get("/api/recent_buzz")
+def get_recent_buzz(weeks: int = Query(3, ge=1, le=12)):
+    """
+    Rolling digest of the last N content_weeks of quotes, grouped by
+    player - for in-season start/sit calls where "this week alone"
+    undersells a player who's had sustained buzz building over several
+    weeks. Real data; same shape as /api/news (frontend reuses the same
+    grouping component) but widens the window instead of a single week.
+    Window shrinks gracefully if fewer than `weeks` weeks exist yet.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT DISTINCT content_week FROM quotes ORDER BY content_week DESC LIMIT %s", (weeks,))
+    included_weeks = [r[0] for r in cur.fetchall()]
+    if not included_weeks:
+        cur.close()
+        conn.close()
+        return {"weeks_included": [], "quotes": []}
+
+    cur.execute(
+        """
+        SELECT p.full_name, p.team, p.position, q.quote_text, q.speaker,
+               q.tags, q.sentiment, q.fantasy_relevance, q.match_confidence,
+               q.created_at, q.content_week,
+               pod.name AS source_podcast, e.published_at AS source_published_at
+        FROM quotes q
+        LEFT JOIN players p ON q.player_id = p.id
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
+        WHERE q.content_week = ANY(%s)
+        ORDER BY q.created_at DESC
+        """,
+        (included_weeks,),
+    )
+    quotes = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return {"weeks_included": [str(w) for w in sorted(included_weeks)], "quotes": quotes}
+
+
 @app.get("/api/rankings")
 def get_rankings():
     conn = get_conn()
