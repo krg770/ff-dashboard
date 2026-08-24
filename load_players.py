@@ -22,6 +22,21 @@ def load():
     roster = roster[["player_name", "team", "position", "player_id"]].dropna(subset=["player_id"])
     roster = roster.drop_duplicates(subset=["player_id"])
 
+    # Full last name, not just the final whitespace-split token - "Amon-Ra
+    # St. Brown".split()[-1] is "Brown", which silently drops the "St."
+    # and produces a short-form alias ("A. Brown") that collides with any
+    # other Brown on the roster. Same bug turns "Odell Beckham Jr." into
+    # the useless alias "O. Jr.". Compute last-name frequency across the
+    # whole roster first so a bare last-name alias only gets added when
+    # it's actually unambiguous (a bare "Brown" would still be genuinely
+    # ambiguous - "St. Brown" as a whole phrase isn't).
+    last_name_counts = {}
+    for _, row in roster.iterrows():
+        parts = str(row["player_name"]).strip().split()
+        if len(parts) >= 2:
+            last_name = " ".join(parts[1:])
+            last_name_counts[last_name] = last_name_counts.get(last_name, 0) + 1
+
     conn = get_conn()
     cur = conn.cursor()
 
@@ -57,11 +72,17 @@ def load():
 
         parts = full_name.split()
         if len(parts) >= 2:
-            short_form = f"{parts[0][0]}. {parts[-1]}"
+            last_name = " ".join(parts[1:])
+            short_form = f"{parts[0][0]}. {last_name}"
             cur.execute(
                 "INSERT INTO player_aliases (player_id, alias, source) VALUES (%s, %s, 'auto') ON CONFLICT DO NOTHING",
                 (db_id, short_form),
             )
+            if last_name_counts.get(last_name) == 1:
+                cur.execute(
+                    "INSERT INTO player_aliases (player_id, alias, source) VALUES (%s, %s, 'auto') ON CONFLICT DO NOTHING",
+                    (db_id, last_name),
+                )
 
     conn.commit()
     cur.close()
