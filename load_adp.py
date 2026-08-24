@@ -10,7 +10,7 @@ Usage:
     python load_adp.py
 """
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from db import get_conn
 
 TEAMS = 10
@@ -53,6 +53,7 @@ def load():
     players = data.get("players", [])
     print(f"Got {len(players)} players.")
 
+    run_timestamp = datetime.now(timezone.utc)
     conn = get_conn()
     cur = conn.cursor()
 
@@ -68,14 +69,34 @@ def load():
             unmatched += 1
             continue
 
+        # `rankings` holds only the current/latest ADP (every other endpoint
+        # in main.py queries it expecting one row per player) - this upsert
+        # overwrites in place, on purpose, every run. Targets
+        # rankings_current_adp_idx (a partial unique index on
+        # (player_id, source, rank_type, season) WHERE week IS NULL) rather
+        # than the table's general unique constraint, which includes `week`
+        # and therefore never actually enforced uniqueness here: Postgres
+        # treats NULL <> NULL, so the plain constraint silently let this
+        # upsert insert duplicate rows every run instead of updating one.
         cur.execute(
             """
             INSERT INTO rankings (player_id, source, rank_type, season, week, value)
             VALUES (%s, 'fantasyfootballcalculator', 'adp', %s, NULL, %s)
-            ON CONFLICT (player_id, source, rank_type, season, week)
+            ON CONFLICT (player_id, source, rank_type, season) WHERE week IS NULL
             DO UPDATE SET value = EXCLUDED.value, fetched_at = now()
             """,
             (player_id, SEASON, adp_value),
+        )
+        # `adp_history` is append-only - this is what makes ADP drift over
+        # time (and buzz-vs-ADP-drift correlation) possible at all. Without
+        # this, re-running the loader would just silently overwrite the one
+        # ADP number every time with no trail left behind.
+        cur.execute(
+            """
+            INSERT INTO adp_history (player_id, source, season, value, fetched_at)
+            VALUES (%s, 'fantasyfootballcalculator', %s, %s, %s)
+            """,
+            (player_id, SEASON, adp_value, run_timestamp),
         )
         matched += 1
 
