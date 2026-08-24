@@ -805,6 +805,132 @@ function SentimentTrendTab() {
   );
 }
 
+function WaiverNewsSection() {
+  const [data, loading] = useApi("/api/waiver_news", []);
+  const updated = latestTimestamp(data, [q => q.created_at]);
+  const { grouped, unmatched } = React.useMemo(() => groupNewsByPlayer(data || []), [data]);
+
+  return (
+    <section className="grid-full">
+      <h2>
+        <span>Waiver Wire News (real data)</span>
+        <SectionUpdated timestamp={updated} />
+      </h2>
+      {loading ? <EmptyState text="Loading..." /> :
+       (!data || data.length === 0) ? <EmptyState text="No waiver-tagged quotes yet" /> :
+      <div>
+        {grouped.map((g, gi) => (
+          <div className="news-group" key={gi}>
+            <div className="news-group-header">
+              <span className="news-group-player">{g.name}</span>
+              <BuzzBadge podcastCount={g.podcastCount} risingCount={g.risingCount} fallingCount={g.fallingCount} />
+            </div>
+            <table>
+              <thead><tr><th>Quote</th><th>Tags</th><th>Source</th></tr></thead>
+              <tbody>{g.quotes.map((q, i) => <NewsQuoteRow q={q} key={i} />)}</tbody>
+            </table>
+          </div>
+        ))}
+      </div>}
+    </section>
+  );
+}
+
+function ByeWeekSection() {
+  const [data, loading] = useApi("/api/bye_weeks", []);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const weeks = React.useMemo(() => {
+    const map = new Map();
+    for (const p of (data || [])) {
+      if (!map.has(p.week)) map.set(p.week, []);
+      map.get(p.week).push(p);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+  }, [data]);
+
+  React.useEffect(() => {
+    if (weeks.length > 0) setExpanded(new Set([weeks[0][0]]));
+  }, [weeks.length]);
+
+  const toggleWeek = (week) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(week)) next.delete(week); else next.add(week);
+      return next;
+    });
+  };
+
+  return (
+    <section className="grid-full">
+      <h2><span>Bye Week Planner (real schedule data)</span></h2>
+      {loading ? <EmptyState text="Loading..." /> :
+       (!data || data.length === 0) ? <EmptyState text="Schedule not loaded yet" /> :
+      <div>
+        <div style={{padding: "10px 12px", fontSize: 12, color: "#9099a8"}}>
+          Rostered-relevant players (have an ADP) grouped by their team's bye week — plan stashes and avoid stacking too many byes in the same week.
+        </div>
+        {weeks.map(([week, players]) => {
+          const isOpen = expanded.has(week);
+          return (
+          <div className="news-group" key={week}>
+            <div className="news-group-header clickable" onClick={() => toggleWeek(week)}>
+              <span className="news-group-player">
+                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Week {week}
+              </span>
+              <span className="round-count">{players.length} players</span>
+            </div>
+            {isOpen &&
+            <table>
+              <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th></tr></thead>
+              <tbody>
+                {players.map((p, i) => (
+                  <tr key={i}><td>{p.full_name}</td><td>{p.team}</td><td>{p.position}</td><td>{p.adp}</td></tr>
+                ))}
+              </tbody>
+            </table>}
+          </div>
+          );
+        })}
+      </div>}
+    </section>
+  );
+}
+
+function opponentLabel(row) {
+  if (!row.next_opponent) return "—";
+  return (row.is_home ? "vs " : "@ ") + row.next_opponent + ` (Wk ${row.next_week})`;
+}
+
+function WaiverWireTab() {
+  const waiting = "Waiting on season data (starts Week 1)";
+  return (
+    <div>
+      <WaiverNewsSection />
+      <ByeWeekSection />
+      <div className="grid">
+        <SimpleTable endpoint="/api/waiver_adds" title="Waiver Must-Adds"
+          columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"snap_trend",label:"Snap Trend"},{key:"adp",label:"ADP"}]}
+          emptyText={waiting} />
+        <SimpleTable endpoint="/api/waiver_avoids" title="Waiver Stay-Aways"
+          columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"snap_trend",label:"Snap Trend"}]}
+          emptyText={waiting} />
+        <SimpleTable endpoint="/api/stream_dst" title="D/ST to Stream"
+          columns={[
+            {key:"full_name",label:"Defense"},{key:"team",label:"Team"},{key:"adp",label:"ADP"},
+            {key:"next_opponent",label:"Next Matchup",render: opponentLabel},
+          ]}
+          emptyText="No defenses loaded" />
+        <SimpleTable endpoint="/api/stream_k" title="Kicker to Stream"
+          columns={[
+            {key:"full_name",label:"Kicker"},{key:"team",label:"Team"},{key:"adp",label:"ADP"},
+            {key:"next_opponent",label:"Next Matchup",render: opponentLabel},
+          ]}
+          emptyText="No kickers loaded" />
+      </div>
+    </div>
+  );
+}
+
 function ReliabilityTab() {
   const [data, loading] = useApi("/api/reliability", []);
 
@@ -887,24 +1013,12 @@ function InSeasonTab() {
           )},
         ]}
         emptyText={waiting} />
-      <SimpleTable endpoint="/api/waiver_adds" title="Waiver Must-Adds"
-        columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"snap_trend",label:"Snap Trend"},{key:"adp",label:"ADP"}]}
-        emptyText={waiting} />
-      <SimpleTable endpoint="/api/waiver_avoids" title="Waiver Stay-Aways"
-        columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"snap_trend",label:"Snap Trend"}]}
-        emptyText={waiting} />
       <SimpleTable endpoint="/api/trade_buy" title="Trade Targets — Buy Low"
         columns={[{key:"full_name",label:"Player"},{key:"preseason_adp",label:"Preseason ADP"},{key:"season_fantasy_points",label:"Season Pts"}]}
         emptyText={waiting} />
       <SimpleTable endpoint="/api/trade_sell" title="Trade Targets — Sell High"
         columns={[{key:"full_name",label:"Player"},{key:"preseason_adp",label:"Preseason ADP"},{key:"season_fantasy_points",label:"Season Pts"}]}
         emptyText={waiting} />
-      <SimpleTable endpoint="/api/stream_dst" title="D/ST to Stream"
-        columns={[{key:"full_name",label:"Defense"},{key:"team",label:"Team"},{key:"adp",label:"ADP"}]}
-        emptyText="Matchup-based logic pending" />
-      <SimpleTable endpoint="/api/stream_k" title="Kicker to Stream"
-        columns={[{key:"full_name",label:"Kicker"},{key:"team",label:"Team"},{key:"adp",label:"ADP"}]}
-        emptyText="Matchup-based logic pending" />
     </div>
   );
 }
@@ -931,6 +1045,7 @@ function App() {
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
         <div className={"tab " + (tab === "salary" ? "active" : "")} onClick={() => setTab("salary")}>Salary</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
+        <div className={"tab " + (tab === "waiver" ? "active" : "")} onClick={() => setTab("waiver")}>Waiver Wire</div>
         <div className={"tab " + (tab === "trends" ? "active" : "")} onClick={() => setTab("trends")}>Trends</div>
         <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
       </div>
@@ -939,6 +1054,7 @@ function App() {
          tab === "draft" ? <DraftTab /> :
          tab === "salary" ? <SalaryTab /> :
          tab === "season" ? <InSeasonTab /> :
+         tab === "waiver" ? <WaiverWireTab /> :
          tab === "trends" ? <SentimentTrendTab /> : <ReliabilityTab />}
       </main>
     </React.Fragment>

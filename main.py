@@ -60,6 +60,21 @@ def current_content_week() -> date:
     return today - timedelta(days=weekday)
 
 
+def current_nfl_week(cur, season=SEASON) -> int:
+    """
+    Smallest schedule week whose games haven't all happened yet, i.e.
+    "the week to look ahead to." Before the season starts (like now -
+    Week 1 kicks off 2026-09-09) this just returns 1. Real schedule data,
+    no guessing: falls back to 1 if team_schedule hasn't been loaded.
+    """
+    cur.execute(
+        "SELECT MIN(week) FROM team_schedule WHERE season = %s AND game_date >= CURRENT_DATE",
+        (season,),
+    )
+    row = cur.fetchone()
+    return row[0] if row and row[0] else 1
+
+
 @app.get("/api/widgets")
 def get_widgets():
     conn = get_conn()
@@ -733,16 +748,19 @@ def get_trade_sell():
 def get_stream_dst():
     conn = get_conn()
     cur = conn.cursor()
+    week = current_nfl_week(cur)
     cur.execute(
         """
-        SELECT p.full_name, p.team, r.value AS adp
+        SELECT p.full_name, p.team, r.value AS adp,
+               ts.week AS next_week, ts.opponent AS next_opponent, ts.is_home
         FROM players p
         LEFT JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        LEFT JOIN team_schedule ts ON ts.team = p.team AND ts.season = %s AND ts.week = %s
         WHERE p.position = 'DEF'
         ORDER BY r.value ASC NULLS LAST
         LIMIT 15
         """,
-        (SEASON,),
+        (SEASON, SEASON, week),
     )
     result = dict_rows(cur)
     cur.close()
@@ -754,16 +772,76 @@ def get_stream_dst():
 def get_stream_k():
     conn = get_conn()
     cur = conn.cursor()
+    week = current_nfl_week(cur)
     cur.execute(
         """
-        SELECT p.full_name, p.team, r.value AS adp
+        SELECT p.full_name, p.team, r.value AS adp,
+               ts.week AS next_week, ts.opponent AS next_opponent, ts.is_home
         FROM players p
         LEFT JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        LEFT JOIN team_schedule ts ON ts.team = p.team AND ts.season = %s AND ts.week = %s
         WHERE p.position = 'K'
         ORDER BY r.value ASC NULLS LAST
         LIMIT 15
         """,
-        (SEASON,),
+        (SEASON, SEASON, week),
+    )
+    result = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return result
+
+
+@app.get("/api/waiver_news")
+def get_waiver_news():
+    """
+    Real data: quotes tagged 'waiver_mention', same shape as /api/news
+    (frontend reuses the same grouping component). Not limited to this
+    week - waiver value calls stay relevant for a bit, and the volume is
+    nowhere near /api/news's scale.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT p.full_name, p.team, p.position, q.quote_text, q.speaker,
+               q.tags, q.sentiment, q.fantasy_relevance, q.match_confidence,
+               q.created_at, q.content_week,
+               pod.name AS source_podcast, e.published_at AS source_published_at
+        FROM quotes q
+        LEFT JOIN players p ON q.player_id = p.id
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
+        WHERE q.tags @> '["waiver_mention"]'
+        ORDER BY q.created_at DESC
+        """
+    )
+    result = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return result
+
+
+@app.get("/api/bye_weeks")
+def get_bye_weeks():
+    """
+    Real schedule data (team_schedule, opponent IS NULL = bye). Players
+    grouped by their team's bye week, sorted by ADP within each week so
+    the most rosterable names float to the top - for stashing ahead of a
+    bye or avoiding stacking too many byes in the same week.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT ts.week, p.full_name, p.team, p.position, r.value AS adp
+        FROM team_schedule ts
+        JOIN players p ON p.team = ts.team
+        LEFT JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        WHERE ts.season = %s AND ts.opponent IS NULL AND r.value IS NOT NULL
+        ORDER BY ts.week ASC, r.value ASC
+        """,
+        (SEASON, SEASON),
     )
     result = dict_rows(cur)
     cur.close()
