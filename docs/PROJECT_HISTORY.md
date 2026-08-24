@@ -653,6 +653,56 @@ for their own sake. Consistent with the earlier "backend/data correctness
 over UI polish" framing, refined: filtering/navigation *is* real UI
 investment worth making eventually, just not aesthetics.
 
+## Duplicate quote extraction from a self-inflicted race condition (2026-08-24)
+
+User flagged Christian McCaffrey's `PAY UP` classification as "seems
+off... raising because he's getting a lot of press but it's negative
+press." Investigation found the real cause wasn't a sentiment-labeling
+problem - it was **duplicate quote extraction inflating the buzz count**,
+and the duplication was caused by an action taken earlier in this same
+session.
+
+**Root cause, on me, not a pre-existing bug**: earlier today, after
+fixing the cron PATH issue, I manually re-ran the pipeline with
+`~/ff-dashboard/run_pipeline.sh` directly to verify the fix and reprocess
+the 4 failed episodes. That bypassed the `flock -n /tmp/ff_pipeline.lock`
+wrapper that only exists in the **crontab entry** - the script itself has
+no locking. My manual run (started 15:12, ~4 episodes × ~18min each) was
+still in progress when the regularly-scheduled 16:00 cron slot fired.
+Since nothing was holding the lock (I never went through it), **both
+processes ran `worker.py` concurrently**, confirmed directly in
+`pipeline.log` - interleaved "Downloading episode 7421" / "Downloading
+episode 7422" lines from two different processes, and one extraction
+call timing out after 600s, almost certainly from resource contention
+between the two concurrent `claude` CLI invocations. Both processes
+independently transcribed and extracted the same episodes, each
+inserting their own quotes.
+
+**Scope, checked precisely rather than assumed**: only episode 7422
+(Fantasy Footballers) actually ended up with true duplicates - 89 rows,
+76 distinct by `(quote_text, raw_player_mention)`. Episodes 7419/7421
+had repeated `quote_text` too, but that turned out to be the
+multi-player-quote-splitting behavior added earlier today (same quote,
+different players) working as intended, not a duplicate - confirmed by
+checking `(quote_text, raw_player_mention)` pairs specifically, not just
+`quote_text` alone.
+
+**Fixed**:
+- Deleted the 13 true duplicate rows from episode 7422 (kept the
+  earliest copy of each).
+- Added a **unique index** on `quotes (episode_id, quote_text,
+  raw_player_mention)` and changed `worker.py`'s insert to
+  `ON CONFLICT DO NOTHING` against it - a future concurrent-run collision
+  now silently no-ops instead of silently duplicating data (or crashing
+  the transaction, which a hard-erroring constraint would have risked
+  given quotes are inserted in a loop without per-row commits).
+
+**Process note for future manual runs**: never invoke `run_pipeline.sh`
+directly again outside of testing a specific fix in isolation - check
+`/api/pipeline_status` (`is_running`) first, or run it through the same
+`flock -n /tmp/ff_pipeline.lock` wrapper cron uses, so a manual run can't
+collide with a scheduled one.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
