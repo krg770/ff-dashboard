@@ -565,6 +565,55 @@ in this tab is mocked.
   which is a nice validation this grouping was the intended design even
   if never wired up.
 
+## Compound surname aliasing was silently broken for 125 players (2026-08-24)
+
+User's hypothesis ("maybe it's looking for first then last?") on a run
+of unmatched/mismatched quotes led to a real, broad bug, not the 3
+one-off phonetic-mangling cases it first looked like.
+
+**Two different bugs, initially tangled together in the same report:**
+
+1. **"Ashton Gentie" → mismatched to "Ashton Gillotte"**, and bare
+   "Gentie" → unmatched. Ordinary Whisper phonetic mangling of "Ashton
+   Jeanty" (same class as "sadeek"/Sadiq, "Judkins and Scattaboo"
+   earlier) - happened to trigram-collide with a different real player
+   who also starts with "Ashton". One-off, fixed with aliases + backfill,
+   nothing systemic here.
+2. **"Ameca Abuqa" → unmatched, but the quote was actually about Amon-Ra
+   St. Brown** - looked at first like it confirmed the user's "last
+   name only" theory (the fantasy_relevance text says "St. Brown"), but
+   the raw mention itself was a phonetic mangling of "Amon-Ra" (his
+   *first* name, which is unusual enough that Whisper mangled it badly),
+   not a bare-last-name case at all. Also one-off, same fix pattern.
+
+**But testing the user's theory directly on a cleanly-spelled surname
+surfaced a real, separate, systemic bug**: `resolve_player("St. Brown")`
+returned **Spencer Brown** - a different, wrong real player - not Amon-Ra
+St. Brown, and not "unmatched" either, which is worse (a wrong answer
+looks like ground truth). Root cause: `load_players.py`'s short-form
+alias generator used `full_name.split()[-1]` as "the last name," which
+for a compound surname only grabs the final whitespace-split token -
+`"Amon-Ra St. Brown".split()[-1]` is `"Brown"`, silently dropping the
+"St." and generating the wrong alias ("A. Brown", which collides with
+every other Brown on the roster) instead of the right one. Same bug
+mangles suffixes even worse: `"Odell Beckham Jr.".split()[-1]` is
+`"Jr."`, producing the alias `"O. Jr."` - useless for every Jr./II/III
+player. **125 active players affected** (checked via query, not just
+guessed), including plenty of real skill players, not only edge cases.
+
+**Fixed**: last name is now everything after the first token
+(`" ".join(parts[1:])`), so "St. Brown", "Beckham Jr.", "Van Ginkel"
+etc. all generate the correct short-form alias. Also now adds a **bare
+full-last-name alias** ("St. Brown" alone, no first initial) whenever
+that exact last name is unique across the whole roster (computed via a
+frequency count pass before inserting anything) - safe for a distinctive
+compound name like "St. Brown", deliberately skipped for common
+single-word surnames ("Brown" alone stays ambiguous on purpose, same
+judgment call as the earlier "Judkins" homonym case). Verified after
+re-running `load_players.py`: `St. Brown`, `Beckham Jr.`, `Van Ginkel`,
+`Godwin Jr.` all now resolve at `high` confidence via exact alias match
+instead of a risky fuzzy guess.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
