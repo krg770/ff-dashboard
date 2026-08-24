@@ -160,6 +160,7 @@ def process_episode(episode_id, title, audio_url, content_week, model, cur, conn
                 quote_text, speaker, timestamp_sec, tags, sentiment,
                 fantasy_relevance, content_week
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (episode_id, quote_text, raw_player_mention) DO NOTHING
             """,
             (
                 episode_id,
