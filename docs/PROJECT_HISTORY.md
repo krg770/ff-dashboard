@@ -516,6 +516,55 @@ existed; none does here).
 
 Both live in a new **Trends** tab.
 
+## Waiver Wire tab (2026-08-24)
+
+Three-part request: waiver-pickup news, forward-looking defense/matchup
+advice, and bye-week planning. All three turned out to be real-data-
+buildable, though two needed new data sources wired up first - nothing
+in this tab is mocked.
+
+- **Waiver Wire News** (`/api/waiver_news`) - quotes tagged
+  `waiver_mention` (32 exist already), grouped by player, reusing the
+  same components as the News/Recent Buzz tabs.
+- **Bye Week Planner** (`/api/bye_weeks`) - needed the actual NFL
+  schedule, which didn't exist in this DB at all before now. Added
+  **`load_schedule.py`**, pulling nflverse's real 2026 schedule (272
+  games) into a new `team_schedule` table (one row per team-week,
+  `opponent IS NULL` = bye). Byes are just as real in preseason as
+  in-season, unlike stats - schedules are set months ahead. Caught
+  another team-code mismatch same as the Diggs/nflverse gap earlier:
+  the schedule source uses `ARI`, this project's `players` table uses
+  `AZ` - normalized on load.
+- **D/ST and Kicker streaming got real matchup data** (`next_opponent`,
+  via `team_schedule`), added `current_nfl_week()` helper (falls back to
+  week 1 pre-season, real schedule data either way). **Caveat, stated
+  plainly, not hidden**: this only shows *who's playing whom*, not
+  *which matchup is favorable* - that needs real defensive stats, which
+  don't exist until the season starts (same limitation as Hot/Cold
+  Meter). Don't oversell this as "matchup advice" - it's schedule
+  awareness, a real building block, not the full ask.
+- **Found and fixed why D/ST to Stream was always empty**, not just
+  today: nflverse's individual-player roster feed has no concept of a
+  team defense, so `players` had zero `position='DEF'` rows, ever -
+  predates this session. Added **`load_defenses.py`** (one-time seed,
+  not a periodic job - NFL teams don't change), full names matching
+  Fantasy Football Calculator's exact naming ("Seattle Defense", "LA
+  Rams Defense") so `load_adp.py`'s existing alias resolution picks them
+  up with no special-casing. Re-ran the ADP loader afterward: unmatched
+  count dropped from 27 to 4.
+- **Follow-up, not fixed today**: the remaining 4 unmatched ADP names
+  are real skill players missing from `players` entirely - Deebo Samuel
+  Sr., Keenan Allen, Brandon Aiyuk, Najee Harris. Same class of gap as
+  Stefon Diggs earlier (nflverse roster feed lagging real-world moves) -
+  would need the same manual-insert treatment (verify current team via
+  web search, insert, alias) whenever picked up.
+- Consolidated Waiver Must-Adds, Waiver Stay-Aways, D/ST to Stream, and
+  Kicker to Stream out of the In-Season tab into this new one -
+  `dashboard_widgets` (an existing but previously-unused metadata table)
+  already categorized exactly these four under `category='waiver'`,
+  which is a nice validation this grouping was the intended design even
+  if never wired up.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
