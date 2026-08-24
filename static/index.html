@@ -712,7 +712,6 @@ function DraftTab() {
     <div className="grid">
       <RoundFocus />
       <Rankings />
-      <News />
     </div>
   );
 }
@@ -876,7 +875,6 @@ function InSeasonTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
     <div className="grid">
-      <News />
       <SimpleTable endpoint="/api/injuries" title="Injuries"
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"report_status",label:"Status"},{key:"practice_status",label:"Practice"}]}
         emptyText={waiting} timestampKey="fetched_at" />
@@ -929,6 +927,7 @@ function App() {
       <LatestUpdate />
       <PipelineStatusBar />
       <div className="tabs">
+        <div className={"tab " + (tab === "news" ? "active" : "")} onClick={() => setTab("news")}>Latest News</div>
         <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
         <div className={"tab " + (tab === "salary" ? "active" : "")} onClick={() => setTab("salary")}>Salary</div>
         <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
@@ -936,7 +935,8 @@ function App() {
         <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
       </div>
       <main>
-        {tab === "draft" ? <DraftTab /> :
+        {tab === "news" ? <div className="grid"><News /></div> :
+         tab === "draft" ? <DraftTab /> :
          tab === "salary" ? <SalaryTab /> :
          tab === "season" ? <InSeasonTab /> :
          tab === "trends" ? <SentimentTrendTab /> : <ReliabilityTab />}
