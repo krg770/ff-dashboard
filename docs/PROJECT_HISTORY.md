@@ -725,6 +725,26 @@ Fixed both the data and the root cause:
   actually improves the outlook relative to a healthy baseline (fully
   practicing, cleared to play), not merely "could have been worse."
 
+## Multi-day Injury Report (2026-08-25)
+
+User noticed the top "NEW INJURY NEWS" bar only ever shows the *latest
+pipeline run's* injuries - as soon as another run happens, yesterday's
+injury news drops out of the alert even though it's still sitting in
+the database untouched. That bar is tied to `/api/latest_run`'s
+single-batch scope by design (it's meant to be a quick "what just
+happened" glance), so this needed a separate view, not a change to that
+one.
+
+Added `/api/injury_report?days=N` (default 3, real calendar-day
+boundaries via `date.today() - timedelta(...)`, not a rolling N*24h
+window that would span partial days at each end) and a new **Injury
+Report** section in the Waiver Wire tab - each day gets its own
+collapsible dropdown (matching the round/sector/week pattern used
+everywhere else in the app), labeled "Today" / "Yesterday" / full date
+for anything older, with today's dropdown open by default. Verified
+live: Today (3 items, open), Yesterday (56 items), Sunday Aug 23 (22
+items) - toggling any of them works independently.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
