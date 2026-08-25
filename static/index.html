@@ -879,6 +879,92 @@ function WaiverNewsSection() {
   );
 }
 
+function InjuryReportSection() {
+  const [days, setDays] = useState(3);
+  const [resp, loading] = useApi(`/api/injury_report?days=${days}`, [days]);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const quotes = resp ? resp.quotes : null;
+
+  const byDay = React.useMemo(() => {
+    const map = new Map();
+    for (const q of (quotes || [])) {
+      const day = q.report_date;
+      if (!map.has(day)) map.set(day, []);
+      map.get(day).push(q);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [quotes]);
+
+  React.useEffect(() => {
+    if (byDay.length > 0) setExpanded(new Set([byDay[0][0]]));
+  }, [byDay.length]);
+
+  const toggleDay = (day) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day); else next.add(day);
+      return next;
+    });
+  };
+
+  const formatDay = (dayStr) => {
+    const d = new Date(dayStr + "T00:00:00");
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diffDays = Math.round((today - d) / 86400000);
+    const label = diffDays === 0 ? "Today" : diffDays === 1 ? "Yesterday" : d.toLocaleDateString(undefined, {weekday: "long", month: "short", day: "numeric"});
+    return label;
+  };
+
+  return (
+    <section className="grid-full">
+      <h2>
+        <span>Injury Report — last {days} day{days === 1 ? "" : "s"}</span>
+        <select value={days} onChange={e => setDays(Number(e.target.value))}>
+          <option value={3}>3 days</option>
+          <option value={7}>7 days</option>
+          <option value={14}>14 days</option>
+        </select>
+      </h2>
+      {loading ? <EmptyState text="Loading..." /> :
+       byDay.length === 0 ? <EmptyState text="No injury-tagged quotes in this window" /> :
+      <div>
+        {byDay.map(([day, dayQuotes]) => {
+          const isOpen = expanded.has(day);
+          return (
+          <div className="news-group" key={day}>
+            <div className="news-group-header clickable" onClick={() => toggleDay(day)}>
+              <span className="news-group-player">
+                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> {formatDay(day)}
+              </span>
+              <span className="round-count">{dayQuotes.length} item{dayQuotes.length === 1 ? "" : "s"}</span>
+            </div>
+            {isOpen &&
+            <table>
+              <thead><tr><th>Player</th><th>Quote</th><th>Source</th></tr></thead>
+              <tbody>
+                {dayQuotes.map((q, i) => (
+                  <tr key={i}>
+                    <td>{q.full_name || <em style={{color:"#6b7280"}}>unmatched</em>}</td>
+                    <td className="quote-cell">
+                      <SentimentBadge sentiment={q.sentiment} /> {q.quote_text}
+                      {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
+                    </td>
+                    <td className="source-cell">
+                      {q.source_podcast && <div>{q.source_podcast}</div>}
+                      {q.source_published_at && <div className="source-date">Aired {new Date(q.source_published_at).toLocaleDateString()}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>}
+          </div>
+          );
+        })}
+      </div>}
+    </section>
+  );
+}
+
 function ByeWeekSection() {
   const [data, loading] = useApi("/api/bye_weeks", []);
   const [expanded, setExpanded] = useState(() => new Set());
@@ -948,6 +1034,7 @@ function WaiverWireTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
     <div>
+      <InjuryReportSection />
       <WaiverNewsSection />
       <ByeWeekSection />
       <div className="grid">

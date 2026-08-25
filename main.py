@@ -822,6 +822,43 @@ def get_waiver_news():
     return result
 
 
+@app.get("/api/injury_report")
+def get_injury_report(days: int = Query(3, ge=1, le=14)):
+    """
+    The top 'NEW INJURY NEWS' bar only ever shows the *latest pipeline
+    run's* injury quotes - as soon as another run happens, yesterday's
+    injury news drops out of view even though it's still in the
+    database. This gives a day-by-day breakdown over a real window
+    instead, so nothing disappears just because a newer run occurred.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    # Clean calendar-day boundaries (today, yesterday, ...) rather than a
+    # rolling N*24h window, which would span partial days at each end -
+    # the point of this view is "for a specific day," so the day buckets
+    # need to actually line up with real days.
+    since = datetime.combine(date.today() - timedelta(days=days - 1), datetime.min.time())
+    cur.execute(
+        """
+        SELECT q.created_at::date AS report_date, p.full_name, q.quote_text,
+               q.fantasy_relevance, q.sentiment, q.tags, q.match_confidence,
+               q.created_at, pod.name AS source_podcast,
+               e.published_at AS source_published_at
+        FROM quotes q
+        LEFT JOIN players p ON q.player_id = p.id
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
+        WHERE q.tags @> '["injury"]' AND q.created_at >= %s
+        ORDER BY q.created_at DESC
+        """,
+        (since,),
+    )
+    result = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return {"days": days, "quotes": result}
+
+
 @app.get("/api/bye_weeks")
 def get_bye_weeks():
     """
