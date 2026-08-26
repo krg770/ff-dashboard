@@ -33,6 +33,25 @@ LEAGUE_TEAMS = 10
 LEAGUE_BUDGET = 200
 ROSTER_SPOTS = 16  # matches the round<=16 cap used elsewhere (Rankings, Round Focus)
 MIN_BID = 1
+
+
+def compute_auction_values(players):
+    """
+    Shared with /api/salary and the player-detail panel so the two
+    never disagree on a player's value. `players` is an ADP-ascending
+    list of tuples whose first element is player_id - see /api/salary
+    for the value-curve rationale (exponential decay by rank).
+    """
+    n = len(players)
+    total_pool = LEAGUE_TEAMS * LEAGUE_BUDGET
+    value_pool = total_pool - MIN_BID * n
+    decay_k = 0.03
+    weights = [math.exp(-decay_k * i) for i in range(n)]
+    weight_sum = sum(weights) or 1
+    return {
+        row[0]: MIN_BID + round(value_pool * weight / weight_sum)
+        for row, weight in zip(players, weights)
+    }
 # Mirrors the WSL crontab entry (`0 8-22/2 * * *`) - not read from crontab
 # directly, just kept in sync manually. Used only to estimate "next run"
 # for the dev panel; the actual schedule lives in cron, this is display-only.
@@ -512,16 +531,11 @@ def get_salary():
     cur.close()
     conn.close()
 
-    n = len(players)
-    total_pool = LEAGUE_TEAMS * LEAGUE_BUDGET
-    value_pool = total_pool - MIN_BID * n
-    decay_k = 0.03
-    weights = [math.exp(-decay_k * i) for i in range(n)]
-    weight_sum = sum(weights) or 1
+    values_by_id = compute_auction_values(players)
 
     result = []
-    for (player_id, full_name, team, position, adp, draft_round), weight in zip(players, weights):
-        auction_value = MIN_BID + round(value_pool * weight / weight_sum)
+    for (player_id, full_name, team, position, adp, draft_round) in players:
+        auction_value = values_by_id[player_id]
         buzz = buzz_by_player.get(player_id, {})
         rising = buzz.get("rising_count", 0)
         falling = buzz.get("falling_count", 0)
@@ -542,6 +556,102 @@ def get_salary():
         "league_teams": LEAGUE_TEAMS, "league_budget": LEAGUE_BUDGET,
         "roster_spots": ROSTER_SPOTS, "players": result,
     }
+
+
+@app.get("/api/players/search")
+def search_players(q: str = Query(..., min_length=1)):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT p.id, p.full_name, p.team, p.position, r.value AS adp
+        FROM players p
+        LEFT JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        WHERE p.full_name ILIKE %s
+        ORDER BY r.value ASC NULLS LAST
+        LIMIT 15
+        """,
+        (SEASON, f"%{q}%"),
+    )
+    result = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return result
+
+
+@app.get("/api/players/{player_id}")
+def get_player_detail(player_id: int):
+    """
+    The "isolated panel" view - everything known about one player in one
+    place: ADP/value (same computation as /api/salary, via the shared
+    helper so the two numbers can never disagree), bye week, and every
+    quote ever recorded about them (no day/week window - this is meant
+    to be the definitive view, not a recent-activity digest).
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, full_name, team, position FROM players WHERE id = %s", (player_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return {"error": "player not found"}
+    player = {"id": row[0], "full_name": row[1], "team": row[2], "position": row[3]}
+
+    cur.execute(
+        """
+        SELECT p.id, r.value
+        FROM players p
+        JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
+        WHERE r.value IS NOT NULL AND CEIL(r.value / 10) <= %s
+        ORDER BY r.value ASC
+        """,
+        (SEASON, ROSTER_SPOTS),
+    )
+    ranked = cur.fetchall()
+    values = compute_auction_values(ranked)
+    player["adp"] = None
+    player["draft_round"] = None
+    player["auction_value"] = values.get(player_id)
+    for pid, adp in ranked:
+        if pid == player_id:
+            player["adp"] = adp
+            player["draft_round"] = math.ceil(adp / 10)
+            break
+
+    cur.execute(
+        """
+        SELECT ts.week FROM team_schedule ts
+        WHERE ts.team = %s AND ts.season = %s AND ts.opponent IS NULL
+        """,
+        (player["team"], SEASON),
+    )
+    bye = cur.fetchone()
+    player["bye_week"] = bye[0] if bye else None
+
+    cur.execute(
+        """
+        SELECT q.quote_text, q.speaker, q.tags, q.sentiment, q.fantasy_relevance,
+               q.match_confidence, q.created_at, q.content_week,
+               pod.name AS source_podcast, e.published_at AS source_published_at
+        FROM quotes q
+        LEFT JOIN episodes e ON q.episode_id = e.id
+        LEFT JOIN podcasts pod ON e.podcast_id = pod.id
+        WHERE q.player_id = %s
+        ORDER BY q.created_at DESC
+        """,
+        (player_id,),
+    )
+    quotes = dict_rows(cur)
+    player["quotes"] = quotes
+    player["podcast_count"] = len({q["source_podcast"] for q in quotes if q["source_podcast"]})
+    player["rising_count"] = sum(1 for q in quotes if q["sentiment"] == "rising")
+    player["falling_count"] = sum(1 for q in quotes if q["sentiment"] == "falling")
+
+    cur.close()
+    conn.close()
+    return player
 
 
 @app.get("/api/news")
