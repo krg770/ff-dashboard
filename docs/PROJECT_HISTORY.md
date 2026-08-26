@@ -790,6 +790,42 @@ which is fine for a single local user but would need real thought
 other devices or "friends who use this type of software" as mentioned.
 Do not just flip the host binding without revisiting this properly.
 
+## Player search + isolated detail panel (2026-08-25)
+
+Direct follow-on from the position-grouping change: with 60 RBs in one
+group, finding a specific player who isn't near the top means a lot of
+scrolling. Matches the "filtering and navigation is the priority" product
+direction from earlier - built as real functional UI, not polish.
+
+- **`/api/players/search?q=`** - autocomplete by name (ILIKE, ADP-sorted,
+  limit 15).
+- **`/api/players/{id}`** - the "isolated panel" itself: ADP, draft
+  round, auction value, bye week, and *every* quote ever recorded about
+  that player (no day/week window - deliberately different from the
+  Recent Buzz-style widgets, since this is meant to be the definitive
+  "everything we know" view, not a recent-activity digest).
+- **Auction value computation extracted into a shared
+  `compute_auction_values()` helper**, used by both `/api/salary` and
+  this new endpoint, so the two can never disagree on a player's dollar
+  value (verified: Jahmyr Gibbs still $54 after the refactor, matching
+  pre-refactor behavior exactly).
+- Frontend: a header search box (debounced, 200ms) with an autocomplete
+  dropdown, and a modal panel reusing `NewsQuoteRow`/`BuzzBadge` for
+  consistent rendering with the rest of the app. Verified live end to
+  end: search "mccaffrey" → two real results → click → full panel with
+  6 quotes, 3-show buzz badge, $45 value, bye week 8 → closes cleanly.
+- `useApi` now tolerates a falsy `path` (returns `null`/not-loading
+  instead of firing a broken request) so the panel component can stay
+  mounted and simply not fetch when no player is selected, rather than
+  needing a conditional hook call (which would violate React's rules of
+  hooks).
+
+**Minor visual note, not fixed (explicitly deferred - "better UI... can
+happen later")**: the header wraps awkwardly on narrow viewports now
+that the search box is competing for space with the title. Worth
+revisiting whenever the "make it look like a 2026 website" pass happens,
+not before.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
