@@ -147,7 +147,7 @@ def get_latest_run():
 
     cur.execute(
         """
-        SELECT q.episode_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence,
+        SELECT q.episode_id, q.player_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence,
                q.fantasy_relevance, q.created_at,
                pod.name AS source_podcast, e.published_at AS source_published_at
         FROM quotes q
@@ -164,18 +164,19 @@ def get_latest_run():
     cur.close()
     conn.close()
 
-    counts = defaultdict(lambda: {"rising": 0, "falling": 0})
+    counts = defaultdict(lambda: {"rising": 0, "falling": 0, "player_id": None})
     for q in quotes:
         if not q["full_name"] or q["sentiment"] not in ("rising", "falling"):
             continue
         counts[q["full_name"]][q["sentiment"]] += 1
+        counts[q["full_name"]]["player_id"] = q["player_id"]
 
     def top(sentiment):
-        candidates = [(name, c[sentiment]) for name, c in counts.items() if c[sentiment] >= MIN_RUN_MENTIONS]
+        candidates = [(name, c) for name, c in counts.items() if c[sentiment] >= MIN_RUN_MENTIONS]
         if not candidates:
             return None
-        name, count = max(candidates, key=lambda nc: nc[1])
-        return {"full_name": name, "mention_count": count}
+        name, c = max(candidates, key=lambda nc: nc[1][sentiment])
+        return {"full_name": name, "mention_count": c[sentiment], "player_id": c["player_id"]}
 
     return {
         "episodes": episodes,
@@ -957,7 +958,7 @@ def get_injury_report(days: int = Query(3, ge=1, le=14)):
     since = datetime.combine(date.today() - timedelta(days=days - 1), datetime.min.time())
     cur.execute(
         """
-        SELECT q.created_at::date AS report_date, p.full_name, q.quote_text,
+        SELECT q.created_at::date AS report_date, q.player_id, p.full_name, q.quote_text,
                q.fantasy_relevance, q.sentiment, q.tags, q.match_confidence,
                q.created_at, pod.name AS source_podcast,
                e.published_at AS source_published_at
