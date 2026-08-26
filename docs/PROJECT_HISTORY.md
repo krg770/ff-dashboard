@@ -745,6 +745,51 @@ for anything older, with today's dropdown open by default. Verified
 live: Today (3 items, open), Yesterday (56 items), Sunday Aug 23 (22
 items) - toggling any of them works independently.
 
+## Round Focus/Rankings redesign, buzz window widened, alignment fix (2026-08-25)
+
+Real testing feedback ahead of the user's draft (Sun/Tue/Wed this week,
+first session starting 3pm today):
+
+- **Round-grouping replaced with position-grouping** in both Round Focus
+  and Rankings, matching the fix already validated on the Salary tab -
+  same reasoning applies: "round" is an artifact of ADP math, not how
+  players actually think about the board. Both now group by position
+  (RB/WR/QB/TE/K/DEF), ADP-sorted within each, using the shared
+  `POSITION_ORDER` constant (renamed from `SALARY_POSITION_ORDER` now
+  that three components use it).
+- **Root cause of "player detail not filled out"**: Round Focus's buzz
+  column was scoped to `content_week` only, so a quote from a few days
+  ago in a prior week bucket just vanished from view even though it
+  still existed. Widened `/api/round_focus` to a rolling 5-day window
+  (`days` query param, default 5) instead - same mechanism as the
+  Recent Buzz digest. Not a backfill (no reprocessing of old episodes) -
+  just stopped throwing away recent-but-not-this-week data. Verified
+  live: Christian McCaffrey went from "No mentions this week" to 4 real
+  quotes.
+- **Column misalignment root cause**: `td` had no `vertical-align` set,
+  so browsers default to `middle` - in a row where the Quote cell is
+  much taller than its neighbors, the short cells (Player/Team/ADP)
+  visually float at a different height per row, making the whole table
+  look like its columns don't line up even though they technically do.
+  Fixed with one shared rule (`vertical-align: top` on the base `td`
+  style) - fixes every table in the app at once, not just Round Focus.
+- **Rankings kept as a separate, simpler widget** (position-grouped,
+  ADP-only, no buzz) rather than merged into Round Focus - a
+  no-buzz quick-reference view still has value during a live draft even
+  though the two are now structurally similar. Revisit if it still feels
+  redundant after real draft use.
+
+**Network access ("eventually")**: user's family (son, wife) need the
+dashboard on their own devices during drafts - today's first draft
+(3pm) is being handled by "freezing" the current state and viewing
+offline, not by live network access. Explicitly described as a *later*
+goal, not solved here - the server binds to localhost only right now,
+CORS is wide open (`allow_origins=["*"]`) and there's no auth at all,
+which is fine for a single local user but would need real thought
+(network binding, at minimum some access control) before exposing to
+other devices or "friends who use this type of software" as mentioned.
+Do not just flip the host binding without revisiting this properly.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
