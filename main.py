@@ -406,12 +406,19 @@ def get_rankings():
 
 
 @app.get("/api/round_focus")
-def get_round_focus(round: int | None = Query(None, ge=1)):
+def get_round_focus(round: int | None = Query(None, ge=1), days: int = Query(5, ge=1, le=30)):
+    """
+    Buzz used to be scoped to the current content_week only, which left
+    most players showing "No mentions this week" even when real quotes
+    about them existed a few days ago - a wide content_week miss reads
+    the same as genuinely no coverage. Widened to a rolling day-window
+    (default 5, matching the Recent Buzz digest's pattern) instead.
+    """
     conn = get_conn()
     cur = conn.cursor()
-    week = current_content_week()
+    since = datetime.now() - timedelta(days=days)
     round_filter = "AND CEIL(r.value / 10) = %s" if round is not None else "AND CEIL(r.value / 10) <= 16"
-    params = [SEASON, week] + ([round] if round is not None else [])
+    params = [SEASON, since] + ([round] if round is not None else [])
     cur.execute(
         f"""
         SELECT
@@ -425,13 +432,13 @@ def get_round_focus(round: int | None = Query(None, ge=1)):
                         'tags', q.tags,
                         'speaker', q.speaker,
                         'created_at', q.created_at
-                    )
+                    ) ORDER BY q.created_at DESC
                 ) FILTER (WHERE q.quote_text IS NOT NULL),
                 '[]'
             ) AS weekly_quotes
         FROM players p
         JOIN rankings r ON r.player_id = p.id AND r.rank_type = 'adp' AND r.season = %s
-        LEFT JOIN quotes q ON q.player_id = p.id AND q.content_week = %s
+        LEFT JOIN quotes q ON q.player_id = p.id AND q.created_at >= %s
         WHERE r.value IS NOT NULL {round_filter}
         GROUP BY p.id, p.full_name, p.team, p.position, r.value
         ORDER BY r.value ASC

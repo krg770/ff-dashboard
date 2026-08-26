@@ -84,7 +84,7 @@
     color: #6b7280;
     border-bottom: 1px solid #262a33;
   }
-  td { padding: 6px 10px; border-bottom: 1px solid #1e2129; }
+  td { padding: 6px 10px; border-bottom: 1px solid #1e2129; vertical-align: top; }
   tr:hover td { background: #1c2029; }
   .empty-state { padding: 24px 12px; text-align: center; color: #6b7280; font-style: italic; }
   .badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
@@ -398,25 +398,27 @@ function DevPanel({ open }) {
 }
 
 function RoundFocus() {
-  const [data, loading] = useApi("/api/round_focus", []);
-  const [expanded, setExpanded] = useState(() => new Set([1]));
+  const [data, loading] = useApi("/api/round_focus?days=5", []);
+  const [expanded, setExpanded] = useState(() => new Set(["RB"]));
   const updated = latestTimestamp(
     (data || []).flatMap(p => p.weekly_quotes || []),
     [q => q.created_at]
   );
-  const rounds = React.useMemo(() => {
+  const byPosition = React.useMemo(() => {
     const map = new Map();
     for (const p of (data || [])) {
-      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
-      map.get(p.draft_round).push(p);
+      if (!map.has(p.position)) map.set(p.position, []);
+      map.get(p.position).push(p);
     }
-    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+    const known = POSITION_ORDER.filter(pos => map.has(pos)).map(pos => [pos, map.get(pos)]);
+    const rest = Array.from(map.entries()).filter(([pos]) => !POSITION_ORDER.includes(pos));
+    return known.concat(rest);
   }, [data]);
 
-  const toggleRound = (round) => {
+  const togglePosition = (pos) => {
     setExpanded(prev => {
       const next = new Set(prev);
-      if (next.has(round)) next.delete(round); else next.add(round);
+      if (next.has(pos)) next.delete(pos); else next.add(pos);
       return next;
     });
   };
@@ -424,31 +426,30 @@ function RoundFocus() {
   return (
     <section className="grid-full">
       <h2>
-        <span>Round Focus</span>
+        <span>Player Buzz — by position, ADP order</span>
         <SectionUpdated timestamp={updated} />
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState text="No players yet" /> :
       <div>
-        {rounds.map(([round, players]) => {
-          const isOpen = expanded.has(round);
+        {byPosition.map(([pos, players]) => {
+          const isOpen = expanded.has(pos);
           return (
-          <div className="news-group" key={round}>
-            <div className="news-group-header clickable" onClick={() => toggleRound(round)}>
+          <div className="news-group" key={pos}>
+            <div className="news-group-header clickable" onClick={() => togglePosition(pos)}>
               <span className="news-group-player">
-                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Round {round}
+                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> {pos}
               </span>
               <span className="round-count">{players.length} players</span>
             </div>
             {isOpen &&
             <table>
-              <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th><th>Podcast Buzz This Week</th></tr></thead>
+              <thead><tr><th>Player</th><th>Team</th><th>ADP</th><th>Podcast Buzz — last 5 days</th></tr></thead>
               <tbody>
                 {players.map((p, i) => (
                   <tr key={i}>
                     <td>{p.full_name}</td>
                     <td>{p.team}</td>
-                    <td>{p.position}</td>
                     <td>{p.adp}</td>
                     <td className="quote-cell">
                       {p.weekly_quotes && p.weekly_quotes.length > 0 ? (
@@ -457,7 +458,7 @@ function RoundFocus() {
                             <SentimentBadge sentiment={q.sentiment} /> <NewBadge timestamp={q.created_at} /> {q.quote}
                           </div>
                         ))
-                      ) : <span style={{color: "#6b7280"}}>No mentions this week</span>}
+                      ) : <span style={{color: "#6b7280"}}>No mentions in the last 5 days</span>}
                     </td>
                   </tr>
                 ))}
@@ -477,7 +478,7 @@ function PayMeterBadge({ payMeter }) {
   return <span className={"badge " + cls}>{label}</span>;
 }
 
-const SALARY_POSITION_ORDER = ["RB", "WR", "QB", "TE", "K", "DEF"];
+const POSITION_ORDER = ["RB", "WR", "QB", "TE", "K", "DEF"];
 
 function ValueMoversCallout({ players }) {
   const payUp = players.filter(p => p.pay_meter === "pay_up").sort((a, b) => b.auction_value - a.auction_value).slice(0, 8);
@@ -526,8 +527,8 @@ function SalaryTab() {
       if (!map.has(p.position)) map.set(p.position, []);
       map.get(p.position).push(p);
     }
-    const known = SALARY_POSITION_ORDER.filter(pos => map.has(pos)).map(pos => [pos, map.get(pos)]);
-    const rest = Array.from(map.entries()).filter(([pos]) => !SALARY_POSITION_ORDER.includes(pos));
+    const known = POSITION_ORDER.filter(pos => map.has(pos)).map(pos => [pos, map.get(pos)]);
+    const rest = Array.from(map.entries()).filter(([pos]) => !POSITION_ORDER.includes(pos));
     return known.concat(rest);
   }, [players]);
 
@@ -604,20 +605,22 @@ function SalaryTab() {
 function Rankings() {
   const [data, loading] = useApi("/api/rankings", []);
   const updated = latestTimestamp(data, [r => r.fetched_at]);
-  const [expanded, setExpanded] = useState(() => new Set([1]));
-  const rounds = React.useMemo(() => {
+  const [expanded, setExpanded] = useState(() => new Set(["RB"]));
+  const byPosition = React.useMemo(() => {
     const map = new Map();
     for (const p of (data || []).slice(0, 50)) {
-      if (!map.has(p.draft_round)) map.set(p.draft_round, []);
-      map.get(p.draft_round).push(p);
+      if (!map.has(p.position)) map.set(p.position, []);
+      map.get(p.position).push(p);
     }
-    return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
+    const known = POSITION_ORDER.filter(pos => map.has(pos)).map(pos => [pos, map.get(pos)]);
+    const rest = Array.from(map.entries()).filter(([pos]) => !POSITION_ORDER.includes(pos));
+    return known.concat(rest);
   }, [data]);
 
-  const toggleRound = (round) => {
+  const togglePosition = (pos) => {
     setExpanded(prev => {
       const next = new Set(prev);
-      if (next.has(round)) next.delete(round); else next.add(round);
+      if (next.has(pos)) next.delete(pos); else next.add(pos);
       return next;
     });
   };
@@ -625,29 +628,29 @@ function Rankings() {
   return (
     <section className="grid-full">
       <h2>
-        <span>Player Rankings (ADP)</span>
+        <span>Player Rankings (ADP) — by position</span>
         <SectionUpdated timestamp={updated} />
       </h2>
       {loading ? <EmptyState text="Loading..." /> :
        (!data || data.length === 0) ? <EmptyState /> :
       <div>
-        {rounds.map(([round, players]) => {
-          const isOpen = expanded.has(round);
+        {byPosition.map(([pos, players]) => {
+          const isOpen = expanded.has(pos);
           return (
-          <div className="news-group" key={round}>
-            <div className="news-group-header clickable" onClick={() => toggleRound(round)}>
+          <div className="news-group" key={pos}>
+            <div className="news-group-header clickable" onClick={() => togglePosition(pos)}>
               <span className="news-group-player">
-                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> Round {round}
+                <span className="collapse-arrow">{isOpen ? "▾" : "▸"}</span> {pos}
               </span>
               <span className="round-count">{players.length} players</span>
             </div>
             {isOpen &&
             <table>
-              <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>ADP</th></tr></thead>
+              <thead><tr><th>Player</th><th>Team</th><th>ADP</th></tr></thead>
               <tbody>
                 {players.map((p, i) => (
                   <tr key={i}>
-                    <td>{p.full_name}</td><td>{p.team}</td><td>{p.position}</td><td>{p.adp}</td>
+                    <td>{p.full_name}</td><td>{p.team}</td><td>{p.adp}</td>
                   </tr>
                 ))}
               </tbody>
