@@ -826,6 +826,32 @@ that the search box is competing for space with the title. Worth
 revisiting whenever the "make it look like a 2026 website" pass happens,
 not before.
 
+## Riser/faller and injury alerts made clickable (2026-08-25)
+
+Direct follow-on from the player search panel: the top-of-page
+"Most talked-about riser/faller" lines and the injury alert rows were
+static text right next to the new clickable-search pattern, which felt
+inconsistent - "I want to click the up/down arrow and see the news, but
+it's static."
+
+- `/api/latest_run`'s `top_riser`/`top_faller` now include `player_id`
+  (previously only tracked by name string, since the aggregation was
+  keyed on `full_name`) - added without changing the aggregation logic
+  itself, just carrying the id through alongside the existing counts.
+- `/api/injury_report` now also returns `player_id` per quote.
+- Both the riser/faller lines and each injury row are now clickable
+  (visual `→` affordance, hover highlight) and open the same player
+  panel built for search - no new UI pattern, just reusing what already
+  existed. Falls back gracefully (non-clickable, no arrow) for the rare
+  unmatched-player case where `player_id` is null.
+- Verified working live via a real click (opened Romeo Doubs' panel
+  correctly) - later re-verification attempts got confusing results
+  because the user was watching/interacting with the same live browser
+  session being used for testing, not a bug in the feature itself.
+  Worth remembering: if browser-pane testing behaves inconsistently
+  mid-session, check whether the user is also driving that same tab
+  before assuming something broke.
+
 ## Fixed issues
 
 - **2026-08-23 — misleading "beneficiary" news read as an injury.** The
