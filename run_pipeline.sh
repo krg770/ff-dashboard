@@ -6,6 +6,11 @@
 export PATH=~/.npm-global/bin:~/.local/bin:$PATH
 
 LOG_FILE=~/ff-dashboard/pipeline.log
+LOCK_FILE=/tmp/ff_pipeline.lock
+
+exec 200>"$LOCK_FILE"
+flock -n 200 || { echo "=== Skipped (already running): $(date) ===" >> "$LOG_FILE"; exit 0; }
+
 echo "=== Run started: $(date) ===" >> "$LOG_FILE"
 
 sudo service postgresql start >> "$LOG_FILE" 2>&1
