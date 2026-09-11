@@ -211,7 +211,13 @@ def run():
     )
 
     print(f"Loading Whisper model ({WHISPER_MODEL_SIZE})...")
-    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+    # No GPU on this machine (nvidia-smi absent, ctranslate2 sees 0 CUDA
+    # devices) - CPU is the only option. Default cpu_threads left the model
+    # at ~4 threads while 12 cores were available (confirmed via top during
+    # a live run: ~410% CPU, 64% idle overall). Raising it doesn't change
+    # what gets transcribed or how - same model, same audio - so there's no
+    # accuracy tradeoff, just more of the idle CPU put to use.
+    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=10)
 
     done = 0
     for episode_id, title, audio_url, content_week in episodes:
