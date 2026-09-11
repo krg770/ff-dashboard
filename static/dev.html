@@ -140,6 +140,11 @@ details summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--acce
     <div class="scroller"><table id="errors"><tbody></tbody></table></div>
   </div>
 
+  <div class="card" style="margin-bottom:16px">
+    <h2>Roster Imports</h2>
+    <div class="scroller"><table id="rosterImports"><tbody></tbody></table></div>
+  </div>
+
   <details class="card">
     <summary>Raw response</summary>
     <pre id="raw" style="margin-top:10px">—</pre>
@@ -343,6 +348,38 @@ async function load(){
     render(await r.json());
   } catch (e){
     showContract(e.message || String(e));
+  }
+  loadRosterImports();
+}
+
+/* The main dashboard hides "couldn't match this line" detail from regular
+   users - it's noise for anyone just checking their roster. This is where
+   that detail actually lives: raw unmatched paste lines, per team, for
+   figuring out why an import came back wrong. */
+async function loadRosterImports(){
+  try {
+    const teams = await fetch("/api/roster/teams", { cache:"no-store" }).then(r => r.json());
+    const rosters = await Promise.all(teams.map(t =>
+      fetch(`/api/roster/teams/${t.id}`, { cache:"no-store" }).then(r => r.json()).catch(() => null)
+    ));
+    $("rosterImports").innerHTML = teams.length
+      ? "<thead><tr><th>Team</th><th>Matched</th><th>Unmatched</th></tr></thead><tbody>" +
+        teams.map((t, i) => {
+          const roster = (rosters[i] && rosters[i].roster) || [];
+          const unmatchedNames = roster.filter(r => !r.player_id).map(r => r.raw_name);
+          const matchedCount = roster.filter(r => r.player_id).length;
+          return "<tr><td><b>" + esc(t.name) + "</b></td>" +
+            '<td class="mono">' + matchedCount + "</td>" +
+            "<td>" + (unmatchedNames.length
+              ? "<details><summary>" + unmatchedNames.length + " unmatched</summary>" +
+                '<div style="margin-top:6px;color:var(--muted);max-width:640px;white-space:pre-wrap">' +
+                esc(unmatchedNames.join(", ")) + "</div></details>"
+              : "0") +
+            "</td></tr>";
+        }).join("") + "</tbody>"
+      : '<tbody><tr><td class="empty">No teams yet.</td></tr></tbody>';
+  } catch (e) {
+    $("rosterImports").innerHTML = '<tbody><tr><td class="empty">Couldn\'t load roster imports.</td></tr></tbody>';
   }
 }
 

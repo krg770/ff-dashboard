@@ -213,10 +213,6 @@
   button.btn.danger:hover { border-color: #f87171; color: #f87171; }
   button.btn:disabled { opacity: 0.5; cursor: default; }
   button.btn:disabled:hover { border-color: #2a2e37; }
-  .unmatched-banner {
-    background: #3a1a1a; border: 1px solid #6b2e2e; color: #f87171;
-    padding: 8px 12px; border-radius: 4px; font-size: 12px;
-  }
   .roster-team-header { cursor: pointer; user-select: none; }
   .roster-import-row { display: flex; gap: 8px; padding: 12px; align-items: center; }
   tr.clickable { cursor: pointer; }
@@ -224,6 +220,14 @@
   .clickable-inline:hover { text-decoration: underline; color: #4f8cff; }
   .handcuff-row { padding: 6px 12px; font-size: 12.5px; border-bottom: 1px solid #1e2129; }
   .handcuff-row:last-child { border-bottom: none; }
+  .roster-subsection {
+    margin-top: 14px; border: 1px solid #262a33; border-radius: 6px;
+    overflow: hidden; background: #14161c;
+  }
+  .roster-subsection .roster-subhead {
+    margin: 0; padding: 8px 12px; background: #1c2029;
+    border-bottom: 1px solid #262a33;
+  }
   .roster-subhead {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
     color: #9099a8; margin: 16px 12px 6px;
@@ -1377,10 +1381,7 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
     })
       .then(r => r.json())
       .then(res => {
-        const unmatched = (res.results || []).filter(r => !r.player_id);
-        setImportMsg(unmatched.length
-          ? `Imported ${res.imported}. Couldn't match: ${unmatched.map(u => u.raw_name).join(", ")}`
-          : `Imported ${res.imported} player(s).`);
+        setImportMsg(`Imported ${res.matched} player(s).`);
         setPasteText("");
         setImporting(false);
         loadDetail();
@@ -1395,14 +1396,13 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
 
   const roster = (detail && detail.roster) || [];
   const matched = roster.filter(r => r.player_id);
-  const unmatched = roster.filter(r => !r.player_id);
 
   return (
     <section>
       <h2 className="roster-team-header" onClick={() => setExpanded(e => !e)}>
         <span>{expanded ? "▾" : "▸"} {team.name}{" "}
           <span style={{ color: "#6b7280", fontWeight: 400, textTransform: "none" }}>
-            ({roster.length} player{roster.length === 1 ? "" : "s"})
+            ({matched.length} player{matched.length === 1 ? "" : "s"})
           </span>
         </span>
         <button className="btn danger" onClick={e => { e.stopPropagation(); doDelete(); }}>Delete team</button>
@@ -1422,12 +1422,6 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
           </div>
           {importMsg && <div style={{ fontSize: 12, color: "#9099a8", marginTop: 6 }}>{importMsg}</div>}
 
-          {unmatched.length > 0 && (
-            <div className="unmatched-banner" style={{ marginTop: 10 }}>
-              Couldn't match on roster: {unmatched.map(u => u.raw_name).join(", ")} — check spelling and re-paste.
-            </div>
-          )}
-
           {matched.length > 0 && (
             <table style={{ marginTop: 10 }}>
               <thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>ADP</th><th>Injury</th><th>Buzz</th></tr></thead>
@@ -1438,7 +1432,7 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
                   const podcastCount = new Set(r.quotes.map(q => q.source_podcast).filter(Boolean)).size;
                   return (
                     <tr key={r.roster_player_id} className="clickable" onClick={() => onSelectPlayer(r.player_id)}>
-                      <td>{r.full_name}{r.match_confidence === "low" && <span className="confidence-low"> (fuzzy match)</span>}</td>
+                      <td>{r.full_name}</td>
                       <td>{r.position}</td>
                       <td>{r.team}</td>
                       <td>{r.adp ?? "—"}</td>
@@ -1452,7 +1446,7 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
           )}
 
           {detail && detail.handcuffs && detail.handcuffs.length > 0 && (
-            <div>
+            <div className="roster-subsection">
               <div className="roster-subhead">Handcuffs to consider</div>
               {detail.handcuffs.map(h => (
                 <div className="handcuff-row" key={h.rostered_player_id}>
@@ -1471,7 +1465,7 @@ function TeamRosterSection({ team, onDeleted, onSelectPlayer }) {
           )}
 
           {detail && detail.waiver_targets && detail.waiver_targets.length > 0 && (
-            <div>
+            <div className="roster-subsection">
               <div className="roster-subhead">Waiver targets (rising buzz, not on this roster)</div>
               <table>
                 <thead><tr><th>Player</th><th>Pos</th><th>Team</th><th>ADP</th><th>Buzz</th></tr></thead>
