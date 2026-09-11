@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #0f1115; color: #e4e6eb; font-size: 13px; padding: 20px; max-width: 700px; }
+  h1 { font-size: 13px; color: #6b7280; font-weight: 500; margin: 0 0 12px; }
+  section { background: #171a21; border: 1px solid #262a33; border-radius: 6px; overflow: hidden; }
+  .news-group-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1c2029; border-top: 1px solid #262a33; border-bottom: 1px solid #262a33; font-size: 12.5px; font-weight: 600; }
+  .news-group:first-child .news-group-header { border-top: none; }
+  .news-group-player { color: #e4e6eb; }
+  .badge { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .rising { background: #1a3a2a; color: #4ade80; }
+  .falling { background: #3a1a1a; color: #f87171; }
+  .neutral { background: #2a2d35; color: #9ca3af; }
+  .mixed { background: #3a3218; color: #fbbf24; }
+  .tag { display: inline-block; background: #262a33; color: #9099a8; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-right: 3px; }
+  .tag.tag-injury { background: #3a1a1a; color: #f87171; font-weight: 600; }
+  .tag.tag-injury_beneficiary { background: #1a3a2a; color: #4ade80; }
+  .confidence-low { color: #fbbf24; font-size: 10px; }
+  .fantasy-relevance { color: #6b7280; font-size: 11px; margin-top: 2px; }
+  .source-date { color: #6b7280; }
+  .new-badge { display: inline-block; background: #1e3a5f; color: #60a5fa; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 4px; letter-spacing: 0.5px; vertical-align: middle; }
+  .news-cards { display: flex; flex-direction: column; gap: 1px; background: #1e2129; }
+  .news-card { background: #171a21; padding: 10px 14px 11px; border-left: 3px solid #2a2d35; display: flex; flex-direction: column; gap: 4px; }
+  .news-card:hover { background: #1a1e26; }
+  .news-card.rising { border-left-color: #4ade80; }
+  .news-card.falling { border-left-color: #f87171; }
+  .news-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .news-card-badges { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .news-card-source { font-size: 11px; color: #9099a8; white-space: nowrap; text-align: right; flex: 0 0 auto; }
+  .news-card-source .source-date { display: block; }
+  .news-card-quote { margin: 0; font-size: 13px; line-height: 1.5; color: #e4e6eb; }
+  .news-card-tags { margin-top: 1px; }
+</style></head>
+<body>
+<h1>Preview only — real "Latest News" tab (/api/news) is empty this week; this pulls real quotes from /api/recent_buzz to show the new card design in action.</h1>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+function isNew(dateStr) {
+  if (!dateStr) return false;
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  return diffMs >= 0 && diffMs < 24 * 3600 * 1000;
+}
+function NewBadge({ timestamp }) { if (!isNew(timestamp)) return null; return <span className="new-badge">NEW</span>; }
+function SentimentBadge({ sentiment }) { if (!sentiment) return null; return <span className={"badge " + sentiment}>{sentiment}</span>; }
+function Tags({ tags }) {
+  if (!tags || !tags.length) return null;
+  return tags.map((t, i) => <span key={i} className={"tag tag-" + t}>{t === "injury_beneficiary" ? "injury beneficiary" : t}</span>);
+}
+function BuzzBadge({ podcastCount, risingCount, fallingCount }) {
+  if (!podcastCount) return null;
+  let cls = "neutral";
+  if (risingCount > fallingCount) cls = "rising"; else if (fallingCount > risingCount) cls = "falling";
+  else if (risingCount > 0 && fallingCount > 0) cls = "mixed";
+  return <span className={"badge " + cls}>{podcastCount === 1 ? "1 show" : `${podcastCount} shows`}</span>;
+}
+function NewsQuoteCard({ q }) {
+  return (
+    <div className={"news-card" + (q.sentiment ? " " + q.sentiment : "")}>
+      <div className="news-card-top">
+        <div className="news-card-badges">
+          <SentimentBadge sentiment={q.sentiment} />
+          <NewBadge timestamp={q.created_at} />
+        </div>
+        <div className="news-card-source">
+          {q.source_podcast && <span>{q.source_podcast}</span>}
+          {q.source_published_at && <span className="source-date">Aired {new Date(q.source_published_at).toLocaleDateString()}</span>}
+        </div>
+      </div>
+      <p className="news-card-quote">{q.quote_text}</p>
+      {q.fantasy_relevance && <div className="fantasy-relevance">{q.fantasy_relevance}</div>}
+      {q.match_confidence === "low" && <div className="confidence-low">possible mismatch</div>}
+      <div className="news-card-tags"><Tags tags={q.tags} /></div>
+    </div>
+  );
+}
+
+function groupByPlayer(data) {
+  const groups = new Map();
+  for (const q of data) {
+    if (!q.full_name) continue;
+    if (!groups.has(q.full_name)) groups.set(q.full_name, []);
+    groups.get(q.full_name).push(q);
+  }
+  return Array.from(groups.entries()).map(([name, quotes]) => ({
+    name, quotes,
+    podcastCount: new Set(quotes.map(q => q.source_podcast).filter(Boolean)).size,
+    risingCount: quotes.filter(q => q.sentiment === "rising").length,
+    fallingCount: quotes.filter(q => q.sentiment === "falling").length,
+  }));
+}
+
+function App() {
+  const [data, setData] = useState(null);
+  useEffect(() => { fetch("/api/recent_buzz?weeks=1").then(r => r.json()).then(d => setData(d.quotes || [])); }, []);
+  if (!data) return <div>loading...</div>;
+  const grouped = groupByPlayer(data).slice(0, 6);
+  return (
+    <section>
+      {grouped.map((g, gi) => (
+        <div className="news-group" key={gi}>
+          <div className="news-group-header">
+            <span className="news-group-player">{g.name}</span>
+            <BuzzBadge podcastCount={g.podcastCount} risingCount={g.risingCount} fallingCount={g.fallingCount} />
+          </div>
+          <div className="news-cards">
+            {g.quotes.map((q, i) => <NewsQuoteCard q={q} key={i} />)}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body></html>
