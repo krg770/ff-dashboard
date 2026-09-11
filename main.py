@@ -990,19 +990,97 @@ def delete_fantasy_team(team_id: int):
     return {"ok": True}
 
 
+MIN_SCAN_NAME_LEN = 6  # skip very short names/aliases - too likely to false-positive as a substring
+MAX_FALLBACK_LINE_LEN = 60  # a "clean" one-name paste line; anything longer is stat-table noise, not a name
+
+
+def _scan_known_names(cur, raw_text: str):
+    """
+    Finds every known player mentioned anywhere in the pasted text by
+    substring, rather than first trying to split the paste into clean
+    one-player rows. Needed because a roster copy-pasted straight out of
+    a fantasy site's table (Yahoo, ESPN, ...) usually isn't clean lines -
+    stat columns are comma-separated too (so comma-splitting shreds it),
+    and the player's name is often glued directly onto trailing tooltip
+    text with no separating space (e.g. "Joe BurrowVideo ForecastPlayer
+    Note, Cin - QB, Sun 1:00pm vs TB, 6, -, 24.92, 96%, 100%, ..."). This
+    just looks for real player names inside that noise instead of trying
+    to parse the noise's structure.
+
+    Returns [(player_id, matched_name, position_in_text), ...] sorted by
+    where each name first appears, so the roster comes back roughly in
+    its original (draft/depth-chart) order.
+    """
+    cur.execute(
+        """
+        SELECT id, full_name AS name FROM players WHERE length(full_name) >= %s
+        UNION ALL
+        SELECT player_id, alias AS name FROM player_aliases WHERE length(alias) >= %s
+        """,
+        (MIN_SCAN_NAME_LEN, MIN_SCAN_NAME_LEN),
+    )
+    candidates = cur.fetchall()
+
+    # Fantasy sites routinely display names without the generational suffix
+    # ("Kenneth Walker" for "Kenneth Walker III") - add the stripped form as
+    # an extra candidate for the same player_id so that still matches.
+    suffix_pattern = re.compile(r"\s+(Jr\.?|Sr\.?|I{2,3}|IV)$", re.IGNORECASE)
+    extra = []
+    for player_id, name in candidates:
+        stripped = suffix_pattern.sub("", name).strip()
+        # Require the stripped form to still be "First Last" (a space in
+        # it) - a bare surname like "Walker" (from alias "Walker Jr.") is
+        # far too generic and false-positives against any unrelated text
+        # containing that word.
+        if stripped != name and " " in stripped and len(stripped) >= MIN_SCAN_NAME_LEN:
+            extra.append((player_id, stripped))
+    candidates = candidates + extra
+
+    candidates.sort(key=lambda row: -len(row[1]))  # longest name first, so "Michael Thomas" beats "Michael"
+
+    lower_text = raw_text.lower()
+    found = {}
+    for player_id, name in candidates:
+        if player_id in found:
+            continue
+        needle = name.lower()
+        start = 0
+        while True:
+            pos = lower_text.find(needle, start)
+            if pos == -1:
+                break
+            before = lower_text[pos - 1] if pos > 0 else " "
+            # Only require a non-letter boundary *before* the match (start of
+            # a name) - deliberately not checking what follows, since that's
+            # exactly where the glued-on junk like "...BurrowVideo Forecast"
+            # shows up.
+            if not before.isalpha():
+                found[player_id] = (name, pos)
+                break
+            start = pos + 1
+
+    return sorted(((pid, name, pos) for pid, (name, pos) in found.items()), key=lambda t: t[2])
+
+
 @app.post("/api/roster/teams/{team_id}/import")
 def import_roster(team_id: int, body: dict = Body(...)):
     """
-    Takes a raw pasted player list (newline or comma separated) and
-    matches each line against the players table. Replaces this team's
-    existing roster wholesale each call, so re-pasting an updated list
-    (add/drop, corrected typo) just works without a separate edit flow.
+    Takes a raw pasted roster and matches it against the players table.
+    Replaces this team's existing roster wholesale each call, so re-pasting
+    an updated list (add/drop, corrected typo) just works without a
+    separate edit flow.
+
+    Two passes: first scan the whole paste for known player names by
+    substring (handles messy fantasy-site table copies - see
+    _scan_known_names). Then, separately, walk each short newline-separated
+    line through the old exact/alias/fuzzy matcher, skipping anything
+    already found - this catches a typo in an otherwise-clean one-name-
+    per-line paste (which the substring scan can't, since it only finds
+    exact known names) without re-introducing noise from a giant glued
+    blob (which won't produce any short lines to try).
     """
     raw = body.get("players", "")
-    if isinstance(raw, list):
-        names = [str(n).strip() for n in raw if str(n).strip()]
-    else:
-        names = [n.strip() for n in re.split(r"[\n,]+", raw) if n.strip()]
+    raw_text = raw if isinstance(raw, str) else "\n".join(str(n) for n in raw if str(n).strip())
 
     conn = get_conn()
     cur = conn.cursor()
@@ -1015,18 +1093,38 @@ def import_roster(team_id: int, body: dict = Body(...)):
     cur.execute("DELETE FROM roster_players WHERE team_id = %s", (team_id,))
 
     results = []
-    for name in names:
-        player_id, confidence = _match_roster_name(cur, name)
+    matched_ids = set()
+
+    for player_id, name, _pos in _scan_known_names(cur, raw_text):
+        cur.execute(
+            "INSERT INTO roster_players (team_id, player_id, raw_name, match_confidence) VALUES (%s, %s, %s, 'high')",
+            (team_id, player_id, name),
+        )
+        results.append({"raw_name": name, "player_id": player_id, "match_confidence": "high"})
+        matched_ids.add(player_id)
+
+    scanned_names_lower = [r["raw_name"].lower() for r in results]
+    for line in (ln.strip() for ln in raw_text.split("\n")):
+        if not line or len(line) > MAX_FALLBACK_LINE_LEN:
+            continue
+        if any(name in line.lower() for name in scanned_names_lower):
+            continue
+        player_id, confidence = _match_roster_name(cur, line)
+        if player_id and player_id in matched_ids:
+            continue
+        if player_id:
+            matched_ids.add(player_id)
         cur.execute(
             "INSERT INTO roster_players (team_id, player_id, raw_name, match_confidence) VALUES (%s, %s, %s, %s)",
-            (team_id, player_id, name, confidence),
+            (team_id, player_id, line, confidence),
         )
-        results.append({"raw_name": name, "player_id": player_id, "match_confidence": confidence})
+        results.append({"raw_name": line, "player_id": player_id, "match_confidence": confidence})
 
     conn.commit()
     cur.close()
     conn.close()
-    return {"team_id": team_id, "imported": len(results), "results": results}
+    matched_count = sum(1 for r in results if r["player_id"])
+    return {"team_id": team_id, "imported": len(results), "matched": matched_count, "results": results}
 
 
 @app.get("/api/roster/teams/{team_id}")
