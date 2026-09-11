@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FF Dev Console</title>
+<style>
+/* Tokens reconciled against static/index.html's actual CSS (2026-08-31) —
+   this file was originally styled from a screenshot; these are the real
+   values now, not a guess. Dark ground, green = healthy/rising, blue =
+   new/links, grey chips for metadata. Single theme on purpose — the app
+   is dark. */
+:root{
+  --bg:#0f1115; --surface:#171a21; --surface2:#1c2029; --surface3:#22262f;
+  --ink:#e4e6eb; --muted:#9099a8; --line:#262a33; --line2:#2a2e37;
+  --accent:#4ade80; --accent-ink:#0b1f14; --accent-soft:#1a3a2a;
+  --good:#4ade80; --good-soft:#1a3a2a; --good-line:#2a5738;
+  --bad:#f87171; --bad-soft:#3a1a1a; --bad-line:#6b2e2e;
+  --warn:#fbbf24; --warn-soft:#3a3218; --warn-line:#5c4620;
+  --link:#4f8cff; --link-soft:#1e3a5f;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased;
+}
+.mono,code{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+a{color:var(--link)}
+
+.bar{
+  position:sticky;top:0;z-index:20;background:var(--surface);
+  border-bottom:1px solid var(--line);padding:9px 16px;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+}
+.bar h1{
+  margin:0;font-size:12px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;white-space:nowrap;
+}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+.dot.running{background:var(--good);animation:pulse 1.4s ease-in-out infinite}
+.dot.idle{background:var(--muted)}
+.dot.error{background:var(--bad)}
+.dot.down{background:var(--bad)}
+@keyframes pulse{50%{opacity:.35}}
+.state{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.btn{
+  padding:5px 11px;border-radius:6px;font-size:12.5px;font-weight:600;
+  border:1px solid var(--line2);background:var(--surface2);white-space:nowrap;
+}
+.btn:hover{background:var(--surface3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.spacer{flex:1}
+.stamp{font-size:11px;color:var(--muted);white-space:nowrap}
+
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:16px}
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;
+}
+.card h2{
+  margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.09em;color:var(--ink);
+}
+.big{font-family:ui-monospace,Menlo,monospace;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.sub{font-size:12px;color:var(--muted);margin-top:3px}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{
+  text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);font-weight:600;padding:0 10px 7px 0;border-bottom:1px solid var(--line);
+}
+td{padding:7px 10px 7px 0;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.scroller{overflow-x:auto}
+
+/* Same chip vocabulary as the waiver table: green = healthy,
+   red = broken, amber = stale, grey = off. */
+.pill{
+  display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.03em;
+  padding:2px 7px;border-radius:3px;border:1px solid transparent;white-space:nowrap;
+}
+.pill.ok{background:var(--good-soft);color:var(--good);border-color:var(--good-line)}
+.pill.err{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-line)}
+.pill.warn{background:var(--warn-soft);color:var(--warn);border-color:var(--warn-line)}
+.pill.off{background:var(--surface2);color:var(--muted);border-color:var(--line2)}
+.pill.new{background:var(--link-soft);color:var(--link);border-color:#2c4a72}
+
+.empty{padding:22px 4px;color:var(--muted);font-size:13px;text-align:center}
+
+/* Contract panel — what you see when the endpoints don't exist yet */
+.contract{
+  background:var(--surface);border:1px solid var(--warn-line);border-radius:8px;
+  padding:16px 18px;margin-bottom:16px;
+}
+.contract h2{margin:0 0 6px;font-size:15px;font-weight:700;color:var(--warn)}
+.contract p{margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.55;max-width:70ch}
+pre{
+  background:var(--surface2);border:1px solid var(--line);border-radius:6px;
+  padding:12px 14px;overflow-x:auto;font-size:12px;line-height:1.5;margin:0 0 12px;
+}
+code{font-size:12px}
+details summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--accent);padding:4px 0}
+.err-line{color:var(--bad);font-size:12.5px;margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <span class="dot" id="dot"></span>
+  <h1>FF Dev Console</h1>
+  <span class="state" id="state">connecting…</span>
+  <span class="spacer"></span>
+  <button class="btn" id="auto" aria-pressed="true">Auto-refresh</button>
+  <button class="btn" id="refresh">Refresh</button>
+  <button class="btn primary" id="runNow">Run poller now</button>
+  <span class="stamp" id="stamp"></span>
+</header>
+
+<div class="wrap">
+  <div id="banner"></div>
+
+  <div class="grid" id="tiles"></div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>Sources</h2>
+    <div class="scroller"><table id="sources"><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>Imported this session</h2>
+    <div class="scroller"><table id="imports"><tbody></tbody></table></div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>Recent errors</h2>
+    <div class="scroller"><table id="errors"><tbody></tbody></table></div>
+  </div>
+
+  <details class="card">
+    <summary>Raw response</summary>
+    <pre id="raw" style="margin-top:10px">—</pre>
+  </details>
+</div>
+
+<script>
+"use strict";
+
+/* Point this at your app. Same-origin by default, so serving this file
+   from the app itself needs no change. */
+const API = {
+  status: "/api/dev/status",
+  run:    "/api/dev/run"
+};
+
+const $ = id => document.getElementById(id);
+let auto = true, timer = null, lastGood = null;
+
+const fmtTime = iso => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+};
+const ago = iso => {
+  if (!iso) return "never";
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (isNaN(s)) return "—";
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.round(s/60) + "m ago";
+  if (s < 86400) return Math.round(s/3600) + "h ago";
+  return Math.round(s/86400) + "d ago";
+};
+const until = iso => {
+  if (!iso) return "—";
+  const s = Math.round((new Date(iso) - Date.now()) / 1000);
+  if (isNaN(s)) return "—";
+  if (s <= 0) return "due now";
+  if (s < 60) return "in " + s + "s";
+  if (s < 3600) return "in " + Math.round(s/60) + "m";
+  return "in " + Math.round(s/3600) + "h";
+};
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function tile(label, value, sub){
+  return '<div class="card"><h2>' + label + '</h2>' +
+    '<div class="big">' + value + '</div>' +
+    (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+}
+
+function render(d){
+  lastGood = d;
+  $("banner").innerHTML = "";
+  $("raw").textContent = JSON.stringify(d, null, 2);
+
+  const p = d.poller || {};
+  const c = d.counts || {};
+  const state = (p.state || "idle").toLowerCase();
+
+  $("dot").className = "dot " + state;
+  $("state").textContent = state;
+  $("stamp").textContent = "updated " + fmtTime(new Date().toISOString());
+
+  $("tiles").innerHTML =
+    tile("Last run", ago(p.lastRunAt),
+      p.lastDurationMs != null ? "took " + (p.lastDurationMs/1000).toFixed(1) + "s" : "") +
+    tile("Next run", until(p.nextRunAt),
+      p.intervalSec ? "every " + Math.round(p.intervalSec/60) + " min" : "") +
+    tile("Imported last run", c.lastRun ?? "—",
+      c.today != null ? c.today + " today" : "") +
+    tile("Total stored", c.total ?? "—", p.startedAt ? "up since " + fmtTime(p.startedAt) : "");
+
+  /* Sources */
+  const sources = d.sources || [];
+  $("sources").innerHTML = sources.length
+    ? "<thead><tr><th>Source</th><th>Status</th><th>Last OK</th><th>Last run</th><th>Items</th><th>Note</th><th></th></tr></thead><tbody>" +
+      sources.map(s => {
+        const cls = !s.enabled ? "off" : s.state === "error" ? "err" : s.state === "stale" ? "warn" : "ok";
+        const label = !s.enabled ? "disabled" : (s.state || "ok");
+        return "<tr><td><b>" + esc(s.name || s.id) + "</b></td>" +
+          '<td><span class="pill ' + cls + '">' + esc(label) + "</span></td>" +
+          '<td class="mono">' + ago(s.lastOkAt) + "</td>" +
+          '<td class="mono">' + ago(s.lastRunAt) + "</td>" +
+          '<td class="mono">' + (s.itemsLastRun ?? "—") + "</td>" +
+          '<td style="color:var(--muted)">' + esc(s.message || "") + "</td>" +
+          '<td><button class="btn" data-run="' + esc(s.id) + '">run</button></td></tr>';
+      }).join("") + "</tbody>"
+    : '<tbody><tr><td class="empty">No sources reported.</td></tr></tbody>';
+
+  /* Imports */
+  const imports = d.imports || [];
+  $("imports").innerHTML = imports.length
+    ? "<thead><tr><th>When</th><th>Source</th><th>Kind</th><th>Count</th><th>Status</th><th>Detail</th></tr></thead><tbody>" +
+      imports.map(i =>
+        '<tr><td class="mono">' + fmtTime(i.at) + "</td>" +
+        "<td>" + esc(i.source) + "</td>" +
+        "<td>" + esc(i.kind || "") + "</td>" +
+        '<td class="mono"><b>' + (i.count ?? "—") + "</b></td>" +
+        '<td><span class="pill ' + (i.status === "error" ? "err" : i.status === "skipped" ? "off" : "ok") +
+          '">' + esc(i.status || "ok") + "</span></td>" +
+        '<td style="color:var(--muted)">' + esc(i.detail || "") + "</td></tr>").join("") + "</tbody>"
+    : '<tbody><tr><td class="empty">Nothing imported yet.</td></tr></tbody>';
+
+  /* Errors */
+  const errors = d.errors || [];
+  $("errors").innerHTML = errors.length
+    ? "<thead><tr><th>When</th><th>Source</th><th>Message</th></tr></thead><tbody>" +
+      errors.map(e =>
+        '<tr><td class="mono">' + fmtTime(e.at) + "</td>" +
+        "<td>" + esc(e.source || "") + "</td>" +
+        '<td style="color:var(--bad)">' + esc(e.message) + "</td></tr>").join("") + "</tbody>"
+    : '<tbody><tr><td class="empty">No errors. </td></tr></tbody>';
+}
+
+/* When the endpoint isn't there yet, the page tells you what to build
+   instead of just showing a spinner forever. */
+function showContract(err){
+  $("dot").className = "dot down";
+  $("state").textContent = "no endpoint";
+  $("banner").innerHTML =
+    '<div class="contract">' +
+      '<h2>Can\'t reach ' + esc(API.status) + '</h2>' +
+      '<p class="err-line mono">' + esc(err) + '</p>' +
+      "<p>This console is just a viewer — it needs two endpoints on your app. " +
+      "Add them and this page fills in. Every field is optional except " +
+      "<code>poller.state</code>; anything you leave out renders as a dash.</p>" +
+      "<pre>GET " + API.status + "  →  200 application/json\n\n" +
+JSON.stringify({
+  poller: {
+    state: "idle",
+    lastRunAt: "2026-08-29T14:32:10Z",
+    lastDurationMs: 4210,
+    nextRunAt: "2026-08-29T14:47:10Z",
+    intervalSec: 900,
+    startedAt: "2026-08-29T09:02:00Z"
+  },
+  counts: { lastRun: 12, today: 340, total: 18422 },
+  sources: [
+    { id: "yahoo", name: "Yahoo API", enabled: true, state: "ok",
+      lastRunAt: "2026-08-29T14:32:10Z", lastOkAt: "2026-08-29T14:32:10Z",
+      itemsLastRun: 8, message: "" },
+    { id: "podcasts", name: "Podcast feeds", enabled: true, state: "stale",
+      lastRunAt: "2026-08-29T14:32:11Z", lastOkAt: "2026-08-29T11:15:00Z",
+      itemsLastRun: 0, message: "no new episodes" }
+  ],
+  imports: [
+    { at: "2026-08-29T14:32:11Z", source: "yahoo", kind: "roster",
+      count: 8, status: "ok", detail: "league 97255" }
+  ],
+  errors: [
+    { at: "2026-08-29T13:02:04Z", source: "podcasts", message: "feed timeout after 30s" }
+  ]
+}, null, 2) + "</pre>" +
+      "<pre>POST " + API.run + "   body: {\"source\": \"yahoo\"}  (source optional)\n" +
+      '                    →  {"ok": true, "message": "started"}</pre>' +
+      "<details><summary>Handler stubs</summary><pre>" + esc(
+`# FastAPI
+@app.get("/api/dev/status")
+def dev_status():
+    return build_status()          # dict matching the shape above
+
+@app.post("/api/dev/run")
+async def dev_run(body: dict = Body(default={})):
+    start_poll(body.get("source"))  # kick it off, don't block
+    return {"ok": True, "message": "started"}
+
+
+# Flask
+@app.get("/api/dev/status")
+def dev_status():
+    return jsonify(build_status())
+
+@app.post("/api/dev/run")
+def dev_run():
+    start_poll((request.get_json(silent=True) or {}).get("source"))
+    return jsonify(ok=True, message="started")
+
+
+# Express
+app.get("/api/dev/status", (req, res) => res.json(buildStatus()))
+app.post("/api/dev/run", (req, res) => {
+  startPoll(req.body?.source)
+  res.json({ ok: true, message: "started" })
+})`) + "</pre></details>" +
+      "<p style=\"margin-top:12px\">Keep <code>imports</code> and <code>errors</code> as a capped in-memory " +
+      "ring buffer — last 50 or so. This is a dev view, it doesn't need history in the database.</p>" +
+    "</div>";
+  $("tiles").innerHTML = "";
+  ["sources","imports","errors"].forEach(id => {
+    $(id).innerHTML = '<tbody><tr><td class="empty">Waiting on ' + esc(API.status) + '</td></tr></tbody>';
+  });
+}
+
+async function load(){
+  try {
+    const r = await fetch(API.status, { headers:{ "Accept":"application/json" }, cache:"no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText);
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.includes("json")) throw new Error("Expected JSON, got " + (ct || "no content-type"));
+    render(await r.json());
+  } catch (e){
+    showContract(e.message || String(e));
+  }
+}
+
+async function run(source){
+  const btn = $("runNow");
+  const label = btn.textContent;
+  btn.textContent = "starting…"; btn.disabled = true;
+  try {
+    const r = await fetch(API.run, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(source ? { source } : {})
+    });
+    const j = await r.json().catch(() => ({}));
+    btn.textContent = j.ok === false ? "failed" : "started";
+    setTimeout(load, 600);
+  } catch(e){
+    btn.textContent = "failed";
+  } finally {
+    setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 1400);
+  }
+}
+
+$("refresh").addEventListener("click", load);
+$("runNow").addEventListener("click", () => run(null));
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-run]");
+  if (b) run(b.dataset.run);
+});
+$("auto").addEventListener("click", () => {
+  auto = !auto;
+  $("auto").setAttribute("aria-pressed", String(auto));
+  clearInterval(timer);
+  if (auto) timer = setInterval(load, 5000);
+});
+
+timer = setInterval(load, 5000);
+load();
+</script>
+</body>
+</html>

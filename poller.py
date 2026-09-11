@@ -30,11 +30,18 @@ def content_week_for(published_at: datetime) -> datetime.date:
     return monday
 
 
-def poll_all():
+def poll_all(podcast_id=None):
+    """
+    Check every active podcast's feed, or just `podcast_id` when given
+    (used by the dev console's per-source "run" button).
+    """
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute("SELECT id, name, rss_url FROM podcasts WHERE active = true")
+    if podcast_id is not None:
+        cur.execute("SELECT id, name, rss_url FROM podcasts WHERE active = true AND id = %s", (podcast_id,))
+    else:
+        cur.execute("SELECT id, name, rss_url FROM podcasts WHERE active = true")
     podcasts = cur.fetchall()
 
     total_new = 0
