@@ -3,4 +3,5 @@ venv/
 __pycache__/
 *.pyc
 pipeline.log
+uvicorn.log
 work/
