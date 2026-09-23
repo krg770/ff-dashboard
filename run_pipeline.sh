@@ -16,6 +16,7 @@ echo "=== Run started: $(date) ===" >> "$LOG_FILE"
 sudo service postgresql start >> "$LOG_FILE" 2>&1
 
 cd ~/ff-dashboard || exit 1
+./start_server.sh >> "$LOG_FILE" 2>&1
 source venv/bin/activate
 
 python poller.py >> "$LOG_FILE" 2>&1
