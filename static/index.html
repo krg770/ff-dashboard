@@ -1255,10 +1255,36 @@ function ReliabilityTab() {
   );
 }
 
+const BET_TYPE_LABEL = {
+  anytime_td: "Anytime TD", first_td: "First TD", passing_yards: "Pass Yds",
+  rushing_yards: "Rush Yds", receiving_yards: "Rec Yds", receptions: "Receptions",
+  passing_tds: "Pass TDs", longest_reception: "Longest Rec", player_other: "Other",
+};
+
+function LeanBadge({ lean }) {
+  if (!lean) return null;
+  const cls = lean === "favorable" ? "rising" : lean === "unfavorable" ? "falling" : "neutral";
+  return <span className={"badge " + cls}>{lean}</span>;
+}
+
 function InSeasonTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
     <div className="grid">
+      <SimpleTable endpoint="/api/betting_props" title="Betting Props — last 7 days"
+        columns={[
+          {key:"full_name",label:"Player"},
+          {key:"bet_type",label:"Prop",render: row => BET_TYPE_LABEL[row.bet_type] || row.bet_type},
+          {key:"line_context",label:"Line",render: row => row.line_context || "—"},
+          {key:"lean",label:"Lean",render: row => <LeanBadge lean={row.lean} />},
+          {key:"source_podcast",label:"Source",render: row => (
+            <span title={row.quote_text}>
+              {row.speaker}{row.match_confidence === "low" && <span className="confidence-low"> (fuzzy match)</span>}
+              <div style={{color:"#6b7280",fontSize:11}}>{row.source_podcast}</div>
+            </span>
+          )},
+        ]}
+        emptyText="No betting takes extracted yet" timestampKey="created_at" />
       <SimpleTable endpoint="/api/injuries" title="Injuries"
         columns={[{key:"full_name",label:"Player"},{key:"team",label:"Team"},{key:"report_status",label:"Status"},{key:"practice_status",label:"Practice"}]}
         emptyText={waiting} timestampKey="fetched_at" />

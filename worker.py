@@ -19,6 +19,7 @@ WORK_DIR = Path(os.getenv("WORK_DIR", "./work"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 EXTRACTION_PROMPT_PATH = Path(__file__).parent / "extraction_prompt.md"
+BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "betting_extraction_prompt.md"
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
 
@@ -53,8 +54,8 @@ def build_roster_context(cur) -> str:
     return "\n".join(f"{name} ({team} - {pos})" for name, team, pos in rows)
 
 
-def run_extraction(transcript: str, roster_context: str) -> list:
-    prompt = EXTRACTION_PROMPT_PATH.read_text()
+def _run_claude_extraction(prompt_path: Path, transcript: str, roster_context: str) -> list:
+    prompt = prompt_path.read_text()
     stdin_content = (
         f"---ROSTER CONTEXT---\n{roster_context}\n\n"
         f"---TRANSCRIPT---\n{transcript}"
@@ -81,6 +82,14 @@ def run_extraction(transcript: str, roster_context: str) -> list:
         print("WARNING: could not parse extraction output as JSON. Raw output:")
         print(output[:500])
         return []
+
+
+def run_extraction(transcript: str, roster_context: str) -> list:
+    return _run_claude_extraction(EXTRACTION_PROMPT_PATH, transcript, roster_context)
+
+
+def run_betting_extraction(transcript: str, roster_context: str) -> list:
+    return _run_claude_extraction(BETTING_EXTRACTION_PROMPT_PATH, transcript, roster_context)
 
 
 def update_pipeline_status(cur, conn, **fields):
@@ -116,36 +125,7 @@ def resolve_player(cur, raw_mention: str):
     return None, "unreviewed"
 
 
-def process_episode(episode_id, title, audio_url, content_week, model, cur, conn):
-    raw_path = WORK_DIR / f"{episode_id}_raw.mp3"
-    fast_path = WORK_DIR / f"{episode_id}_fast.mp3"
-
-    update_pipeline_status(
-        cur, conn,
-        current_episode_id=episode_id, current_episode_title=title,
-        stage="downloading", stage_started_at=datetime.now(timezone.utc),
-    )
-    print(f"  Downloading episode {episode_id}...")
-    download_audio(audio_url, raw_path)
-
-    print("  Speeding up audio...")
-    speed_up_audio(raw_path, fast_path)
-
-    update_pipeline_status(cur, conn, stage="transcribing", stage_started_at=datetime.now(timezone.utc))
-    print("  Transcribing...")
-    transcript = transcribe(fast_path, model)
-
-    cur.execute(
-        "UPDATE episodes SET status = 'transcribed', transcript = %s WHERE id = %s",
-        (transcript, episode_id),
-    )
-    conn.commit()
-
-    update_pipeline_status(cur, conn, stage="extracting", stage_started_at=datetime.now(timezone.utc))
-    print("  Extracting quotes...")
-    roster_context = build_roster_context(cur)
-    quotes = run_extraction(transcript, roster_context)
-
+def insert_fantasy_quotes(cur, episode_id, content_week, quotes):
     for q in quotes:
         raw_mention = q.get("raw_player_mention", "")
         if raw_mention:
@@ -177,9 +157,86 @@ def process_episode(episode_id, title, audio_url, content_week, model, cur, conn
             ),
         )
 
+
+def insert_bet_quotes(cur, episode_id, content_week, bet_quotes):
+    for q in bet_quotes:
+        raw_mention = q.get("raw_player_mention", "")
+        if raw_mention:
+            player_id, confidence = resolve_player(cur, raw_mention)
+        else:
+            player_id, confidence = None, "unreviewed"
+
+        cur.execute(
+            """
+            INSERT INTO bet_quotes (
+                episode_id, player_id, raw_player_mention, match_confidence,
+                bet_type, lean, sharp_or_public, line_context,
+                quote_text, speaker, timestamp_sec, tags,
+                betting_relevance, content_week
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (episode_id, quote_text, raw_player_mention) DO NOTHING
+            """,
+            (
+                episode_id,
+                player_id,
+                raw_mention,
+                confidence,
+                q.get("bet_type", "player_other"),
+                q.get("lean", "neutral"),
+                q.get("sharp_or_public"),
+                q.get("line_context"),
+                q.get("quote_text", ""),
+                q.get("speaker"),
+                q.get("timestamp_sec"),
+                json.dumps(q.get("tags", [])),
+                q.get("betting_relevance"),
+                content_week,
+            ),
+        )
+
+
+def process_episode(episode_id, title, audio_url, content_week, category, model, cur, conn):
+    raw_path = WORK_DIR / f"{episode_id}_raw.mp3"
+    fast_path = WORK_DIR / f"{episode_id}_fast.mp3"
+
+    update_pipeline_status(
+        cur, conn,
+        current_episode_id=episode_id, current_episode_title=title,
+        stage="downloading", stage_started_at=datetime.now(timezone.utc),
+    )
+    print(f"  Downloading episode {episode_id}...")
+    download_audio(audio_url, raw_path)
+
+    print("  Speeding up audio...")
+    speed_up_audio(raw_path, fast_path)
+
+    update_pipeline_status(cur, conn, stage="transcribing", stage_started_at=datetime.now(timezone.utc))
+    print("  Transcribing...")
+    transcript = transcribe(fast_path, model)
+
+    cur.execute(
+        "UPDATE episodes SET status = 'transcribed', transcript = %s WHERE id = %s",
+        (transcript, episode_id),
+    )
+    conn.commit()
+
+    update_pipeline_status(cur, conn, stage="extracting", stage_started_at=datetime.now(timezone.utc))
+    roster_context = build_roster_context(cur)
+
+    if category == "betting":
+        print("  Extracting betting takes...")
+        bet_quotes = run_betting_extraction(transcript, roster_context)
+        insert_bet_quotes(cur, episode_id, content_week, bet_quotes)
+        n = len(bet_quotes)
+    else:
+        print("  Extracting quotes...")
+        quotes = run_extraction(transcript, roster_context)
+        insert_fantasy_quotes(cur, episode_id, content_week, quotes)
+        n = len(quotes)
+
     cur.execute("UPDATE episodes SET status = 'extracted' WHERE id = %s", (episode_id,))
     conn.commit()
-    print(f"  Done. {len(quotes)} quote(s) extracted.")
+    print(f"  Done. {n} quote(s) extracted.")
 
     raw_path.unlink(missing_ok=True)
     fast_path.unlink(missing_ok=True)
@@ -192,7 +249,12 @@ def run():
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id, title, audio_url, content_week FROM episodes WHERE status = 'new' AND audio_url IS NOT NULL"
+        """
+        SELECT e.id, e.title, e.audio_url, e.content_week, p.category
+        FROM episodes e JOIN podcasts p ON p.id = e.podcast_id
+        WHERE e.status = 'new' AND e.audio_url IS NOT NULL
+        ORDER BY (p.category = 'betting') DESC, e.id
+        """
     )
     episodes = cur.fetchall()
 
@@ -208,6 +270,11 @@ def run():
         episodes_total_this_run=len(episodes), episodes_done_this_run=0,
         current_episode_id=None, current_episode_title=None,
         stage="loading_model", stage_started_at=run_timestamp,
+        # Cleared here, not just left over from whatever this run's first
+        # episode happens to take - otherwise a slow episode (or a stale
+        # value from a resource-contention period) inflates the ETA shown
+        # on the dashboard until the first episode of *this* run finishes.
+        avg_seconds_per_episode=None,
     )
 
     print(f"Loading Whisper model ({WHISPER_MODEL_SIZE})...")
@@ -220,9 +287,9 @@ def run():
     model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=10)
 
     done = 0
-    for episode_id, title, audio_url, content_week in episodes:
+    for episode_id, title, audio_url, content_week, category in episodes:
         try:
-            process_episode(episode_id, title, audio_url, content_week, model, cur, conn)
+            process_episode(episode_id, title, audio_url, content_week, category, model, cur, conn)
             cur.execute("UPDATE episodes SET processed_at = %s WHERE id = %s", (run_timestamp, episode_id))
             conn.commit()
         except Exception as e:

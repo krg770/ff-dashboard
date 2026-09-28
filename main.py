@@ -1303,6 +1303,40 @@ def get_news():
     return result
 
 
+@app.get("/api/betting_props")
+def get_betting_props(days: int = Query(7, ge=1, le=30)):
+    """
+    Surfaces the actual over/under numbers analysts mentioned on the
+    betting podcasts - e.g. "Justin Jefferson over/under 78 receiving
+    yards" - not just a qualitative lean. One row per (player, prop)
+    mention rather than collapsing to a single "current" line, since two
+    shows disagreeing on the same player's prop is itself a useful signal,
+    not noise to be averaged away. A 7-day window by default since a
+    betting take is tied to a specific week's game and goes stale fast -
+    unlike fantasy buzz, there's no real "trend" value in an old line.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT p.full_name, p.team, p.position, bq.bet_type, bq.line_context,
+               bq.lean, bq.match_confidence, bq.speaker, pod.name AS source_podcast,
+               bq.quote_text, bq.betting_relevance, bq.created_at
+        FROM bet_quotes bq
+        JOIN players p ON p.id = bq.player_id
+        JOIN episodes e ON e.id = bq.episode_id
+        JOIN podcasts pod ON pod.id = e.podcast_id
+        WHERE bq.created_at >= now() - make_interval(days => %s)
+        ORDER BY p.full_name, bq.created_at DESC
+        """,
+        (days,),
+    )
+    result = dict_rows(cur)
+    cur.close()
+    conn.close()
+    return result
+
+
 @app.get("/api/injuries")
 def get_injuries():
     """
