@@ -3,3 +3,4 @@ feedparser
 requests
 faster-whisper
 python-dotenv
+nflreadpy[pandas]

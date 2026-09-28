@@ -1305,6 +1305,14 @@ def get_news():
 
 @app.get("/api/injuries")
 def get_injuries():
+    """
+    nflverse's raw injury report includes every player with any injury
+    history that week, even a full participant with no game-status
+    concern (report_status is null in that case) - filtering those out
+    is the difference between a useful injury list and several hundred
+    healthy players. Ordered by how concerning the designation is, not
+    alphabetically, so "Out" surfaces before "Questionable."
+    """
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -1313,8 +1321,15 @@ def get_injuries():
                i.practice_status, i.week, i.fetched_at
         FROM injuries i
         JOIN players p ON i.player_id = p.id
-        WHERE i.season = %s
-        ORDER BY i.week DESC NULLS LAST, p.full_name
+        WHERE i.season = %s AND i.report_status IS NOT NULL
+        ORDER BY i.week DESC NULLS LAST,
+                 CASE i.report_status
+                     WHEN 'Out' THEN 1
+                     WHEN 'Doubtful' THEN 2
+                     WHEN 'Questionable' THEN 3
+                     ELSE 4
+                 END,
+                 p.full_name
         LIMIT 100
         """,
         (SEASON,),
@@ -1362,7 +1377,7 @@ def get_hot_cold():
         JOIN ranked prior ON prior.player_id = latest.player_id AND prior.rn = 2
         JOIN players p ON p.id = latest.player_id
         LEFT JOIN buzz ON buzz.player_id = p.id
-        WHERE latest.rn = 1
+        WHERE latest.rn = 1 AND p.position IN ('QB', 'RB', 'WR', 'TE')
         ORDER BY ABS(latest.stat_value - prior.stat_value) DESC
         LIMIT 30
         """,
@@ -1444,11 +1459,12 @@ def get_trade_buy():
     cur.execute(
         """
         SELECT p.full_name, p.team, p.position, r.value AS preseason_adp,
-               ps.stat_value AS season_fantasy_points
+               SUM(ps.stat_value) AS season_fantasy_points
         FROM rankings r
         JOIN players p ON r.player_id = p.id
         JOIN player_stats ps ON ps.player_id = p.id AND ps.stat_name = 'fantasy_points_ppr' AND ps.season = %s
         WHERE r.rank_type = 'adp' AND r.season = %s
+        GROUP BY p.id, p.full_name, p.team, p.position, r.value
         ORDER BY r.value ASC
         LIMIT 20
         """,
@@ -1467,11 +1483,12 @@ def get_trade_sell():
     cur.execute(
         """
         SELECT p.full_name, p.team, p.position, r.value AS preseason_adp,
-               ps.stat_value AS season_fantasy_points
+               SUM(ps.stat_value) AS season_fantasy_points
         FROM rankings r
         JOIN players p ON r.player_id = p.id
         JOIN player_stats ps ON ps.player_id = p.id AND ps.stat_name = 'fantasy_points_ppr' AND ps.season = %s
         WHERE r.rank_type = 'adp' AND r.season = %s
+        GROUP BY p.id, p.full_name, p.team, p.position, r.value
         ORDER BY r.value DESC
         LIMIT 20
         """,

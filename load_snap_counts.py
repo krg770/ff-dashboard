@@ -1,13 +1,19 @@
 """
-Loads snap count percentages from nflverse (via nfl_data_py) into the
+Loads snap count percentages from nflverse (via nflreadpy) into the
 player_stats table (stat_name='snap_pct'). This source uses player
 names rather than gsis_id, so matching falls back to the same
 exact-then-fuzzy logic as the ADP loader.
 
+nfl_data_py (the original source for this script) hard-pins
+pandas<2.0, which can't build on a modern Python/pandas setup -
+nflreadpy is its actively-maintained successor and has no such
+constraint. It returns polars DataFrames, hence the .to_pandas()
+below to keep the rest of this script unchanged.
+
 Usage:
     python load_snap_counts.py
 """
-import nfl_data_py as nfl
+import nflreadpy as nfl
 from db import get_conn
 
 SEASON = 2026
@@ -40,7 +46,7 @@ def resolve_player(cur, name: str):
 
 def load():
     print(f"Pulling {SEASON} snap counts from nflverse...")
-    snaps = nfl.import_snap_counts([SEASON])
+    snaps = nfl.load_snap_counts(seasons=[SEASON]).to_pandas()
 
     conn = get_conn()
     cur = conn.cursor()

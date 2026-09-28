@@ -1,13 +1,19 @@
 """
-Loads current NFL injury reports from nflverse (via nfl_data_py) into
+Loads current NFL injury reports from nflverse (via nflreadpy) into
 the injuries table. Uses gsis_id for an exact match against players -
 no fuzzy matching needed since this is the same ID system used when
 players were loaded.
 
+nfl_data_py (the original source for this script) hard-pins
+pandas<2.0, which can't build on a modern Python/pandas setup -
+nflreadpy is its actively-maintained successor and has no such
+constraint. It returns polars DataFrames, hence the .to_pandas()
+below to keep the rest of this script unchanged.
+
 Usage:
     python load_injuries.py
 """
-import nfl_data_py as nfl
+import nflreadpy as nfl
 from db import get_conn
 
 SEASON = 2026
@@ -15,7 +21,7 @@ SEASON = 2026
 
 def load():
     print(f"Pulling {SEASON} injury reports from nflverse...")
-    injuries = nfl.import_injuries([SEASON])
+    injuries = nfl.load_injuries(seasons=[SEASON]).to_pandas()
 
     conn = get_conn()
     cur = conn.cursor()
