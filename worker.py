@@ -22,6 +22,7 @@ EXTRACTION_PROMPT_PATH = Path(__file__).parent / "extraction_prompt.md"
 BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "betting_extraction_prompt.md"
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
+MAX_FANTASY_EPISODES_PER_RUN = 5
 
 
 def download_audio(url: str, dest: Path):
@@ -256,7 +257,19 @@ def run():
         ORDER BY (p.category = 'betting') DESC, e.id
         """
     )
-    episodes = cur.fetchall()
+    all_episodes = cur.fetchall()
+
+    # Betting takes priority over fantasy - not just processed first within
+    # a run (the ORDER BY above), but structurally guaranteed: a large
+    # fantasy backlog can never crowd out betting content, since this run's
+    # episode list is fixed once fetched (no re-checking the DB mid-run).
+    # Capping fantasy episodes per run means the worst case is "fantasy
+    # backlog takes a few extra runs to clear," never "betting has to wait
+    # behind it." Uncapped betting episodes are rare enough (a handful of
+    # shows) that no cap is needed on that side.
+    betting_episodes = [e for e in all_episodes if e[4] == "betting"]
+    fantasy_episodes = [e for e in all_episodes if e[4] != "betting"][:MAX_FANTASY_EPISODES_PER_RUN]
+    episodes = betting_episodes + fantasy_episodes
 
     if not episodes:
         print("No new episodes to process.")
