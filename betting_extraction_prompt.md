@@ -41,9 +41,12 @@ For each item found, extract:
   low rather than guessed
 - `bet_type`: one of "anytime_td", "first_td", "passing_yards",
   "rushing_yards", "receiving_yards", "receptions", "passing_tds",
-  "longest_reception", "player_other". Use "player_other" for a real
-  offensive-player prop that doesn't fit these categories rather than
-  forcing a bad fit.
+  "interceptions", "rushing_attempts", "longest_reception", "longest_rush",
+  "game_leader" (a comparative/field prop like "most rushing yards in the
+  game" or "highest-scoring player" - not a personal over/under), or
+  "player_other". Use "player_other" only for a real offensive-player prop
+  that genuinely doesn't fit any of these - not as a default when unsure;
+  re-read the list above first.
 - `lean`: "favorable" | "unfavorable" | "neutral" — is the chatter
   bullish or bearish on this prop actually hitting. "neutral" for
   purely descriptive commentary (a line number stated with no read on
@@ -53,10 +56,13 @@ For each item found, extract:
   vs. public/recreational money (e.g. "the sharps are all over this
   under", "this is a square play"). Leave null otherwise — do not infer
   it from tone alone.
-- `line_context`: the specific number mentioned if any (e.g. "over 74.5
-  yards", "+150", "-3.5"), verbatim as stated, or null if no specific
-  number was given. Exact odds vary by sportsbook and go stale fast —
-  this is context for the quote, not a live line to act on.
+- `line_context`: JUST the number/line, kept short - "over 74.5 yards",
+  "+150", "under 39.5", "-3.5" - or null if no specific number was given.
+  Do NOT put line-movement narration here ("opened +105, now -112",
+  "moved from 16.5 to 17.5") - that belongs in `betting_relevance`
+  instead, tagged "line_movement". This field should always be scannable
+  in isolation, never a sentence. Exact odds vary by sportsbook and go
+  stale fast - this is context for the quote, not a live line to act on.
 - `quote_text`: the actual statement, under 40 words, verbatim from transcript
 - `speaker`: host/guest name or show name
 - `timestamp_sec`: approximate timestamp if available in the transcript

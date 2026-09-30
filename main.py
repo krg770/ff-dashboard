@@ -1321,15 +1321,30 @@ def get_betting_props(days: int = Query(7, ge=1, le=30)):
         """
         SELECT p.full_name, p.team, p.position, bq.bet_type, bq.line_context,
                bq.lean, bq.match_confidence, bq.speaker, pod.name AS source_podcast,
-               bq.quote_text, bq.betting_relevance, bq.created_at
+               bq.quote_text, bq.betting_relevance, bq.created_at,
+               ts.week AS game_week, ts.opponent AS game_opponent,
+               ts.is_home AS game_is_home, ts.game_date
         FROM bet_quotes bq
         JOIN players p ON p.id = bq.player_id
         JOIN episodes e ON e.id = bq.episode_id
         JOIN podcasts pod ON pod.id = e.podcast_id
+        LEFT JOIN LATERAL (
+            -- No show explicitly states "this is for the Week N game," so
+            -- this infers it: the closest-dated game on the player's
+            -- schedule to when the take was recorded. Nearest in either
+            -- direction, not just upcoming, since some segments (e.g.
+            -- "Prop Points") recap how last week's props hit rather than
+            -- preview what's next.
+            SELECT week, opponent, is_home, game_date
+            FROM team_schedule ts2
+            WHERE ts2.team = p.team AND ts2.season = %s
+            ORDER BY ABS(ts2.game_date - bq.created_at::date)
+            LIMIT 1
+        ) ts ON true
         WHERE bq.created_at >= now() - make_interval(days => %s)
         ORDER BY p.full_name, bq.created_at DESC
         """,
-        (days,),
+        (SEASON, days),
     )
     result = dict_rows(cur)
     cur.close()

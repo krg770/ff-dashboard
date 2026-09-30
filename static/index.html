@@ -1258,7 +1258,9 @@ function ReliabilityTab() {
 const BET_TYPE_LABEL = {
   anytime_td: "Anytime TD", first_td: "First TD", passing_yards: "Pass Yds",
   rushing_yards: "Rush Yds", receiving_yards: "Rec Yds", receptions: "Receptions",
-  passing_tds: "Pass TDs", longest_reception: "Longest Rec", player_other: "Other",
+  passing_tds: "Pass TDs", interceptions: "INTs", rushing_attempts: "Rush Att",
+  longest_reception: "Longest Rec", longest_rush: "Longest Rush",
+  game_leader: "Game Leader", player_other: "Other",
 };
 
 function LeanBadge({ lean }) {
@@ -1273,13 +1275,31 @@ function InSeasonTab() {
     <div className="grid">
       <SimpleTable endpoint="/api/betting_props" title="Betting Props — last 7 days"
         columns={[
-          {key:"full_name",label:"Player"},
+          {key:"full_name",label:"Player",render: row => (
+            <span>
+              {row.full_name}
+              {row.match_confidence === "low" && <span className="confidence-low"> (uncertain match)</span>}
+            </span>
+          )},
           {key:"bet_type",label:"Prop",render: row => BET_TYPE_LABEL[row.bet_type] || row.bet_type},
           {key:"line_context",label:"Line",render: row => row.line_context || "—"},
           {key:"lean",label:"Lean",render: row => <LeanBadge lean={row.lean} />},
+          {key:"game_date",label:"Game",render: row => {
+            if (!row.game_date) return "—";
+            const gd = new Date(row.game_date + "T12:00:00");
+            const isPast = gd < new Date();
+            const loc = row.game_is_home ? "vs" : "@";
+            return (
+              <span style={{color: isPast ? "#6b7280" : "#e4e6eb"}}>
+                Wk{row.game_week} {loc} {row.game_opponent}
+                <div style={{fontSize:11}}>{gd.toLocaleDateString(undefined,{month:"numeric",day:"numeric"})}{isPast && " (played)"}</div>
+              </span>
+            );
+          }},
+          {key:"created_at",label:"Recorded",render: row => timeAgo(row.created_at)},
           {key:"source_podcast",label:"Source",render: row => (
             <span title={row.quote_text}>
-              {row.speaker}{row.match_confidence === "low" && <span className="confidence-low"> (fuzzy match)</span>}
+              {row.speaker}
               <div style={{color:"#6b7280",fontSize:11}}>{row.source_podcast}</div>
             </span>
           )},
