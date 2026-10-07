@@ -6,6 +6,7 @@ Usage:
     uvicorn main:app --reload --port 8000
 Then open http://localhost:8000 in a browser.
 """
+import difflib
 import math
 import re
 import threading
@@ -177,6 +178,11 @@ def get_latest_run():
         episodes = dict_rows(cur)
     episode_ids = [e["id"] for e in episodes]
 
+    # `quotes` below is fantasy-only; betting episodes write to bet_quotes, so
+    # without this a run of betting episodes read as "0 quote(s) found".
+    cur.execute("SELECT count(*) FROM bet_quotes WHERE episode_id = ANY(%s)", (episode_ids,))
+    betting_prop_count = cur.fetchone()[0]
+
     cur.execute(
         """
         SELECT q.episode_id, q.player_id, p.full_name, q.quote_text, q.tags, q.sentiment, q.match_confidence,
@@ -236,6 +242,7 @@ def get_latest_run():
     return {
         "episodes": episodes,
         "quotes": quotes,
+        "betting_prop_count": betting_prop_count,
         "top_riser": top("rising"),
         "top_faller": top("falling"),
         "injury_quotes_today": injury_quotes_today,
@@ -1461,6 +1468,267 @@ def get_betting_props(days: int = Query(7, ge=1, le=30)):
     cur.close()
     conn.close()
     return result
+
+
+_GENERIC_SPEAKERS = {"", "host", "hosts", "co-host", "cohost", "co host", "house", "guest", "unknown", "panelist"}
+
+
+def _analyst_key(speaker, show_name):
+    """
+    One identity per analyst so the same person isn't counted twice for the
+    same prop. Strips parentheticals ("nick costos (prop king)" ==
+    "nick costos") and lets generic labels ("co-host", "house") fall back to
+    the show, since an anonymous co-host can't be told apart from another.
+    """
+    s = re.sub(r"\(.*?\)", "", speaker or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    if s in _GENERIC_SPEAKERS or "panelist" in s:
+        return f"{show_name} (host)"
+    return s
+
+
+_NAME_SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"}
+
+
+def _plausible_low_match(raw, full_name):
+    """
+    A low-confidence fuzzy match is usually either a transcription
+    misspelling of the right player ("Derek Henry" -> Derrick Henry,
+    "Mackay Lemon" -> Makai Lemon) or a different player entirely ("Zach
+    Ertz" -> Zach Tom). Whole-string similarity can't tell those apart; this
+    requires the first AND last name to each be individually close.
+    """
+    def parts(name):
+        toks = [t for t in re.sub(r"[^a-z' .-]", "", (name or "").lower()).split() if t not in _NAME_SUFFIXES]
+        return toks
+    r, f = parts(raw), parts(full_name)
+    if len(r) < 2 or len(f) < 2:
+        return False
+    first = difflib.SequenceMatcher(None, r[0], f[0]).ratio()
+    last = difflib.SequenceMatcher(None, r[-1], f[-1]).ratio()
+    return first >= 0.6 and last >= 0.8
+
+
+def _consensus_score(analysts, shows, agreement, sharp, recent_hours, fantasy_aligned, injury_status):
+    """
+    0-100 strength of analyst agreement - NOT a probability that a bet hits.
+    Every term is returned alongside the total so the UI can show exactly
+    why a pick scored what it did.
+    """
+    parts = [
+        ("Analysts talking about it", round(min(analysts, 5) / 5 * 50), 50),
+        ("Different shows", round(min(shows, 3) / 3 * 15), 15),
+        ("Analysts agree on direction", round(agreement * 20), 20),
+        ("Called sharp money", 5 if sharp else 0, 5),
+        ("Discussed in last 48h", 5 if recent_hours is not None and recent_hours <= 48 else 0, 5),
+        ("Fantasy podcasts agree", 5 if fantasy_aligned else 0, 5),
+    ]
+    penalty = {"Out": -40, "Doubtful": -30, "Questionable": -10}.get(injury_status, 0)
+    if penalty:
+        parts.append((f"Injury report: {injury_status}", penalty, 0))
+    total = max(0, min(100, sum(p[1] for p in parts)))
+    return total, [{"label": l, "points": pts, "max": mx} for l, pts, mx in parts]
+
+
+@app.get("/api/best_bets")
+def get_best_bets(days: int = Query(7, ge=1, le=14)):
+    """
+    A ranked focus list: which player props are the most analysts talking
+    about for an UPCOMING game, most-discussed first. Informational
+    comparison of what the podcasts are saying - never a recommendation.
+
+    A "pick" is one (player, prop type, game). The game is inferred as the
+    player's next scheduled game on/after the episode's publish date (not
+    when we happened to process it). Takes whose game has already been
+    played are dropped; low-confidence player matches are dropped rather
+    than risk attributing a take to the wrong player.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT bq.player_id, p.full_name, p.team, p.position, bq.bet_type, bq.line_context,
+               bq.lean, bq.sharp_or_public, bq.match_confidence, bq.raw_player_mention, bq.speaker,
+               pod.id AS pod_id, pod.name AS show_name, bq.quote_text, bq.betting_relevance,
+               e.published_at, ts.week AS game_week, ts.opponent, ts.is_home, ts.game_date
+        FROM bet_quotes bq
+        JOIN players p ON p.id = bq.player_id
+        JOIN episodes e ON e.id = bq.episode_id
+        JOIN podcasts pod ON pod.id = e.podcast_id
+        LEFT JOIN LATERAL (
+            SELECT week, opponent, is_home, game_date
+            FROM team_schedule t
+            WHERE t.team = p.team AND t.season = %s AND t.game_date >= e.published_at::date
+            ORDER BY t.game_date
+            LIMIT 1
+        ) ts ON true
+        WHERE e.published_at >= now() - make_interval(days => %s)
+        ORDER BY e.published_at DESC
+        """,
+        (SEASON, days),
+    )
+    rows = dict_rows(cur)
+
+    today = date.today()
+    excluded = {"low_confidence_match": 0, "game_already_played": 0, "no_scheduled_game": 0, "parlay": 0}
+    groups = {}
+    for r in rows:
+        # A multi-leg parlay is one combined bet tagged onto several players -
+        # not a per-player prop, and it would rank as several separate picks.
+        if re.search(r"parlay|\d[- ]leg|teaser", f'{r["line_context"] or ""} {r["quote_text"] or ""}', re.I):
+            excluded["parlay"] += 1
+            continue
+        if r["match_confidence"] == "low" and not _plausible_low_match(r["raw_player_mention"], r["full_name"]):
+            excluded["low_confidence_match"] += 1
+            continue
+        if not r["game_date"]:
+            excluded["no_scheduled_game"] += 1
+            continue
+        if r["game_date"] < today:
+            excluded["game_already_played"] += 1
+            continue
+        groups.setdefault((r["player_id"], r["bet_type"], r["game_date"]), []).append(r)
+
+    player_ids = list({k[0] for k in groups})
+    fantasy = {}
+    injuries = {}
+    if player_ids:
+        cur.execute(
+            """
+            SELECT q.player_id,
+                   count(*) FILTER (WHERE q.sentiment = 'rising'),
+                   count(*) FILTER (WHERE q.sentiment = 'falling')
+            FROM quotes q JOIN episodes e ON e.id = q.episode_id
+            WHERE q.player_id = ANY(%s) AND e.published_at >= now() - make_interval(days => %s)
+            GROUP BY q.player_id
+            """,
+            (player_ids, days),
+        )
+        fantasy = {pid: (rising, falling) for pid, rising, falling in cur.fetchall()}
+        cur.execute(
+            """
+            SELECT DISTINCT ON (player_id) player_id, report_status
+            FROM injuries
+            WHERE season = %s AND player_id = ANY(%s)
+            ORDER BY player_id, week DESC
+            """,
+            (SEASON, player_ids),
+        )
+        # Latest week's report only; 'NaN' (a healthy participant) must not
+        # fall back to an older week's designation.
+        injuries = {pid: s for pid, s in cur.fetchall() if s in ("Out", "Doubtful", "Questionable")}
+    cur.close()
+    conn.close()
+
+    now = datetime.now(timezone.utc)
+    picks = []
+    for (player_id, bet_type, game_date), items in groups.items():
+        # Newest first already; keep each analyst's most recent take on this prop.
+        by_analyst = {}
+        for it in items:
+            by_analyst.setdefault(_analyst_key(it["speaker"], it["show_name"]), it)
+        takes = list(by_analyst.values())
+        analysts = len(takes)
+        shows = len({t["pod_id"] for t in takes})
+        fav = sum(1 for t in takes if t["lean"] == "favorable")
+        unfav = sum(1 for t in takes if t["lean"] == "unfavorable")
+        if fav > unfav:
+            direction = "for"
+        elif unfav > fav:
+            direction = "against"
+        elif fav and unfav:
+            direction = "split"
+        else:
+            direction = "neutral"
+        agreement = (max(fav, unfav) / (fav + unfav)) if (fav + unfav) else 0.5
+        sharp = sum(1 for t in takes if t["sharp_or_public"] == "sharp")
+        newest = max(t["published_at"] for t in takes)
+        recent_hours = (now - newest).total_seconds() / 3600
+        rising, falling = fantasy.get(player_id, (0, 0))
+        fantasy_aligned = (direction == "for" and rising > falling) or (direction == "against" and falling > rising)
+        fantasy_conflict = (direction == "for" and falling > rising) or (direction == "against" and rising > falling)
+        injury = injuries.get(player_id)
+        score, breakdown = _consensus_score(
+            analysts, shows, agreement if direction != "neutral" else 0.5, sharp, recent_hours, fantasy_aligned, injury
+        )
+        lines = []
+        for t in items:
+            if t["line_context"] and t["line_context"] not in lines:
+                lines.append(t["line_context"])
+        first = items[0]
+        picks.append({
+            "player_id": player_id,
+            "full_name": first["full_name"],
+            "team": first["team"],
+            "position": first["position"],
+            "bet_type": bet_type,
+            "game_date": game_date,
+            "game_week": first["game_week"],
+            "opponent": first["opponent"],
+            "is_home": first["is_home"],
+            "analysts": analysts,
+            "shows": shows,
+            "lean_for": fav,
+            "lean_against": unfav,
+            "direction": direction,
+            "sharp_count": sharp,
+            "lines": lines[:4],
+            "score": score,
+            "score_breakdown": breakdown,
+            "fantasy_rising": rising,
+            "fantasy_falling": falling,
+            "fantasy_aligned": fantasy_aligned,
+            "fantasy_conflict": fantasy_conflict,
+            "injury_status": injury,
+            "latest_at": newest,
+            "takes": [
+                {
+                    "analyst": t["speaker"] or t["show_name"],
+                    "show": t["show_name"],
+                    "lean": t["lean"],
+                    "line": t["line_context"],
+                    "quote": t["quote_text"],
+                    "why": t["betting_relevance"],
+                    "at": t["published_at"],
+                }
+                for t in takes
+            ],
+        })
+
+    picks.sort(key=lambda p: (-p["analysts"], -p["shows"], -p["score"], -p["sharp_count"], -p["latest_at"].timestamp()))
+    for i, p in enumerate(picks, 1):
+        p["rank"] = i
+
+    # Game roll-up: which games are drawing the most analyst attention.
+    games = {}
+    for p in picks:
+        # Keyed on the pair of teams so ATL vs BAL and BAL @ ATL are one game.
+        g = games.setdefault((p["game_date"], frozenset((p["team"], p["opponent"]))), {
+            "team": p["team"], "opponent": p["opponent"], "is_home": p["is_home"],
+            "game_date": p["game_date"], "game_week": p["game_week"],
+            "analyst_mentions": 0, "props": 0, "top": [],
+        })
+        g["analyst_mentions"] += p["analysts"]
+        g["props"] += 1
+        if len(g["top"]) < 3:
+            g["top"].append(f'{p["full_name"]} {BET_TYPE_NAMES.get(p["bet_type"], p["bet_type"])}')
+    game_list = sorted(games.values(), key=lambda g: (-g["analyst_mentions"], g["game_date"]))[:8]
+
+    return {
+        "window_days": days,
+        "picks": picks,
+        "games": game_list,
+        "excluded": excluded,
+    }
+
+
+BET_TYPE_NAMES = {
+    "anytime_td": "Anytime TD", "first_td": "First TD", "passing_yards": "Pass Yds",
+    "rushing_yards": "Rush Yds", "receiving_yards": "Rec Yds", "receptions": "Receptions",
+    "passing_tds": "Pass TDs", "interceptions": "INTs", "rushing_attempts": "Rush Att",
+    "longest_reception": "Longest Rec", "longest_rush": "Longest Rush",
+    "game_leader": "Game Leader", "player_other": "Other",
+}
 
 
 @app.get("/api/injuries")

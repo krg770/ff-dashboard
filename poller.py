@@ -9,6 +9,7 @@ Usage:
 import feedparser
 from datetime import datetime, timedelta, timezone
 from db import get_conn
+import episode_filter
 import run_history
 
 
@@ -40,13 +41,13 @@ def poll_all(podcast_id=None):
     cur = conn.cursor()
 
     if podcast_id is not None:
-        cur.execute("SELECT id, name, rss_url FROM podcasts WHERE active = true AND id = %s", (podcast_id,))
+        cur.execute("SELECT id, name, rss_url, category FROM podcasts WHERE active = true AND id = %s", (podcast_id,))
     else:
-        cur.execute("SELECT id, name, rss_url FROM podcasts WHERE active = true")
+        cur.execute("SELECT id, name, rss_url, category FROM podcasts WHERE active = true")
     podcasts = cur.fetchall()
 
     total_new = 0
-    for podcast_id, name, rss_url in podcasts:
+    for podcast_id, name, rss_url, category in podcasts:
         print(f"Checking {name}...")
         feed = feedparser.parse(rss_url)
 
@@ -77,6 +78,20 @@ def poll_all(podcast_id=None):
                     break
 
             week = content_week_for(published_at)
+
+            # Several betting shows cover every sport; don't spend an hour of
+            # transcription on an episode that is clearly not about football.
+            reason = episode_filter.skip_reason(name, category, title)
+            if reason:
+                cur.execute(
+                    """
+                    INSERT INTO episodes (podcast_id, guid, title, published_at, audio_url, status, content_week, error_message)
+                    VALUES (%s, %s, %s, %s, %s, 'skipped', %s, %s)
+                    """,
+                    (podcast_id, guid, title, published_at, audio_url, week, reason),
+                )
+                print(f"  Skipped ({reason}): {title}")
+                continue
 
             cur.execute(
                 """

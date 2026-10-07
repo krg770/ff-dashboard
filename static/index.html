@@ -94,6 +94,48 @@
   .falling { background: #3a1a1a; color: #f87171; }
   .neutral { background: #2a2d35; color: #9ca3af; }
   .mixed { background: #3a3218; color: #fbbf24; }
+  .focus-intro { padding: 10px 14px; color: #9099a8; font-size: 12px; line-height: 1.5; border-bottom: 1px solid #262a33; }
+  .focus-intro strong { color: #e4e6eb; }
+  .focus-games { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #262a33; font-size: 12px; align-items: center; }
+  .focus-games .label { color: #6b7280; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px; }
+  .focus-game-chip { background: #1c2029; border: 1px solid #2a2e37; border-radius: 12px; padding: 2px 10px; color: #c4c9d4; }
+  .focus-game-chip b { color: #e4e6eb; font-weight: 600; }
+  .focus-tier { padding: 12px 14px 4px; font-size: 12px; font-weight: 600; color: #e4e6eb; }
+  .focus-tier small { color: #6b7280; font-weight: 400; margin-left: 6px; }
+  .focus-note { padding: 8px 14px 12px; color: #fbbf24; font-size: 12px; }
+  .focus-card { display: flex; gap: 12px; padding: 10px 14px; border-top: 1px solid #1e2129; align-items: flex-start; }
+  .focus-rank { font-size: 20px; font-weight: 700; color: #4f8cff; min-width: 28px; line-height: 1.2; }
+  .focus-main { flex: 1; min-width: 0; }
+  .focus-title { font-size: 14px; color: #e4e6eb; font-weight: 600; }
+  .focus-title .prop { color: #4f8cff; font-weight: 600; margin-left: 6px; }
+  .focus-title .line { color: #9099a8; font-weight: 400; margin-left: 6px; font-size: 12px; }
+  .focus-meta { font-size: 12px; color: #9099a8; margin-top: 3px; }
+  .focus-dots { letter-spacing: 2px; color: #4f8cff; margin-right: 6px; }
+  .focus-dots .off { color: #2f3441; }
+  .focus-chips { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .focus-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 10px; background: #262a33; color: #9ca3af; }
+  .focus-chip.good { background: #1a3a2a; color: #4ade80; }
+  .focus-chip.bad { background: #3a1a1a; color: #f87171; }
+  .focus-chip.warn { background: #3a3218; color: #fbbf24; }
+  .focus-side { text-align: center; min-width: 74px; }
+  .focus-score { display: inline-block; min-width: 46px; padding: 3px 8px; border-radius: 6px; font-size: 16px; font-weight: 700; color: #0f1115; }
+  .focus-score-cap { font-size: 9.5px; color: #6b7280; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .focus-dir { display: inline-block; margin-top: 5px; font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 3px; }
+  .focus-dir.for { background: #1a3a2a; color: #4ade80; }
+  .focus-dir.against { background: #3a1a1a; color: #f87171; }
+  .focus-dir.split { background: #3a3218; color: #fbbf24; }
+  .focus-dir.neutral { background: #2a2d35; color: #9ca3af; }
+  .focus-details { margin-top: 6px; font-size: 12px; }
+  .focus-details summary { cursor: pointer; color: #6b7280; }
+  .focus-details summary:hover { color: #9ca3af; }
+  .focus-take { margin: 6px 0 0 4px; padding-left: 10px; border-left: 2px solid #2a2e37; color: #c4c9d4; }
+  .focus-take .who { color: #e4e6eb; font-weight: 600; }
+  .focus-take .why { color: #9099a8; margin-top: 2px; }
+  .focus-breakdown { margin: 8px 0 2px 4px; display: grid; grid-template-columns: 190px 1fr 46px; gap: 3px 8px; align-items: center; color: #9099a8; }
+  .focus-breakdown .bar { height: 6px; background: #262a33; border-radius: 3px; overflow: hidden; }
+  .focus-breakdown .bar > div { height: 100%; background: #4f8cff; }
+  .focus-breakdown .neg > div { background: #f87171; }
+  .focus-footnote { padding: 8px 14px 12px; color: #6b7280; font-size: 11px; border-top: 1px solid #1e2129; }
   .tag { display: inline-block; background: #262a33; color: #9099a8; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-right: 3px; }
   .tag.tag-injury { background: #3a1a1a; color: #f87171; font-weight: 600; }
   .tag.tag-injury_beneficiary { background: #1a3a2a; color: #4ade80; }
@@ -390,7 +432,7 @@ function LatestUpdate({ onSelectPlayer }) {
     <div className="latest-update">
       <div className="latest-update-summary">
         Latest update: {processedTime} — {data.episodes.length} episode(s) processed,{" "}
-        {quotes.length} quote(s) found
+        {quotes.length} fantasy quote(s) and {data.betting_prop_count || 0} betting prop(s) found
         {mostRecent && <> — most recent: <strong>{mostRecent.title}</strong></>}
       </div>
       {(data.top_riser || data.top_faller) && (
@@ -1391,10 +1433,141 @@ function LeanBadge({ lean }) {
   return <span className={"badge " + cls}>{lean}</span>;
 }
 
+const FOCUS_DIRECTION = {
+  for: "Analysts lean FOR",
+  against: "Analysts lean AGAINST",
+  split: "Analysts SPLIT",
+  neutral: "No clear lean",
+};
+
+function focusScoreColor(score) {
+  // red (weak agreement) -> amber -> green (strong agreement)
+  return `hsl(${Math.round(Math.min(score, 100) * 1.2)}, 68%, 56%)`;
+}
+
+function focusGameLabel(p) {
+  if (!p.game_date) return null;
+  const gd = new Date(p.game_date + "T12:00:00");
+  const days = Math.round((gd - new Date()) / 86400000);
+  const when = days <= 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+  const day = gd.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+  return `Wk${p.game_week} ${p.is_home ? "vs" : "@"} ${p.opponent} · ${day} (${when})`;
+}
+
+function FocusCard({ p }) {
+  const dots = Array.from({ length: Math.max(5, p.analysts) }, (_, i) => i < p.analysts);
+  return (
+    <div className="focus-card">
+      <div className="focus-rank">{p.rank}</div>
+      <div className="focus-main">
+        <div className="focus-title">
+          {p.full_name} <span style={{ color: "#6b7280", fontWeight: 400, fontSize: 12 }}>{p.team} {p.position}</span>
+          <span className="prop">{BET_TYPE_LABEL[p.bet_type] || p.bet_type}</span>
+          {p.lines.length > 0 && <span className="line">{p.lines.join("  ·  ")}</span>}
+        </div>
+        <div className="focus-meta">
+          <span className="focus-dots">{dots.map((on, i) => <span key={i} className={on ? "" : "off"}>●</span>)}</span>
+          <strong style={{ color: "#e4e6eb" }}>{p.analysts}</strong> {p.analysts === 1 ? "analyst" : "analysts"}
+          {" "}on {p.shows} {p.shows === 1 ? "show" : "shows"} · {focusGameLabel(p)}
+        </div>
+        <div className="focus-chips">
+          {p.sharp_count > 0 && <span className="focus-chip good">sharp money cited</span>}
+          {p.lean_for > 0 && p.lean_against > 0 && <span className="focus-chip warn">{p.lean_for} for / {p.lean_against} against</span>}
+          {p.injury_status && <span className="focus-chip bad">injury report: {p.injury_status}</span>}
+          {p.fantasy_aligned && <span className="focus-chip good">fantasy podcasts agree ({p.fantasy_rising}↑ {p.fantasy_falling}↓)</span>}
+          {p.fantasy_conflict && <span className="focus-chip warn">fantasy podcasts disagree ({p.fantasy_rising}↑ {p.fantasy_falling}↓)</span>}
+          {!p.fantasy_aligned && !p.fantasy_conflict && (p.fantasy_rising + p.fantasy_falling) > 0 &&
+            <span className="focus-chip">fantasy buzz mixed ({p.fantasy_rising}↑ {p.fantasy_falling}↓)</span>}
+        </div>
+        <details className="focus-details">
+          <summary>What they said ({p.takes.length}) &amp; why this score</summary>
+          {p.takes.map((t, i) => (
+            <div key={i} className="focus-take">
+              <span className="who">{t.analyst}</span> <span style={{ color: "#6b7280" }}>· {t.show} · {timeAgo(t.at)}</span>{" "}
+              <LeanBadge lean={t.lean} />{t.line && <span style={{ color: "#9099a8" }}> {t.line}</span>}
+              <div>“{t.quote}”</div>
+              {t.why && <div className="why">{t.why}</div>}
+            </div>
+          ))}
+          <div className="focus-breakdown">
+            {p.score_breakdown.map((b, i) => (
+              <React.Fragment key={i}>
+                <span>{b.label}</span>
+                <div className={"bar" + (b.points < 0 ? " neg" : "")}><div style={{ width: `${b.max ? Math.round(b.points / b.max * 100) : 100}%` }} /></div>
+                <span>{b.points > 0 ? "+" : ""}{b.points}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </details>
+      </div>
+      <div className="focus-side">
+        <div className="focus-score" style={{ background: focusScoreColor(p.score) }}>{p.score}</div>
+        <div className="focus-score-cap">agreement</div>
+        <div className={"focus-dir " + p.direction}>{FOCUS_DIRECTION[p.direction]}</div>
+      </div>
+    </div>
+  );
+}
+
+function FocusBoard() {
+  const [data, loading] = useApi("/api/best_bets", [], 60000);
+  const picks = (data && data.picks) || [];
+  const strong = picks.filter(p => p.analysts >= 3);
+  const building = picks.filter(p => p.analysts === 2);
+  const singles = picks.filter(p => p.analysts === 1);
+  const nothingStrong = strong.length === 0 && building.length === 0;
+  const ex = (data && data.excluded) || {};
+
+  return (
+    <section className="grid-full">
+      <h2><span>Focus List — what the podcasts agree on, in priority order</span></h2>
+      <div className="focus-intro">
+        Ranked by <strong>how many different analysts are talking about the same prop for the same upcoming game</strong>.
+        The 0–100 score measures how strongly the analysts agree (and how fresh and well-supported the talk is) — it is
+        <strong> not</strong> the chance a bet hits. For comparison and trend only; not a recommendation to bet.
+      </div>
+      {loading ? <EmptyState text="Loading..." /> : picks.length === 0 ? (
+        <EmptyState text="No props discussed yet for upcoming games — this fills in as this week's previews publish" />
+      ) : (
+        <>
+          {data.games.length > 0 && (
+            <div className="focus-games">
+              <span className="label">Games drawing the most talk</span>
+              {data.games.slice(0, 6).map((g, i) => (
+                <span key={i} className="focus-game-chip" title={g.top.join(", ")}>
+                  <b>{g.team}</b> {g.is_home ? "vs" : "@"} {g.opponent} · {g.analyst_mentions} {g.analyst_mentions === 1 ? "mention" : "mentions"}, {g.props} {g.props === 1 ? "prop" : "props"}
+                </span>
+              ))}
+            </div>
+          )}
+          {strong.length > 0 && <div className="focus-tier">Start here — 3+ analysts<small>strongest agreement</small></div>}
+          {strong.map(p => <FocusCard key={p.rank} p={p} />)}
+          {building.length > 0 && <div className="focus-tier">Building — 2 analysts<small>worth watching as more previews land</small></div>}
+          {building.map(p => <FocusCard key={p.rank} p={p} />)}
+          {nothingStrong && singles.length > 0 && (
+            <div className="focus-note">
+              No prop has 2+ analysts behind it yet for an upcoming game — most weekly previews land Thursday–Saturday, so
+              this list gets sharper through the week. Single mentions so far, newest signal first:
+            </div>
+          )}
+          {singles.length > 0 && !nothingStrong && <div className="focus-tier">Single mentions<small>one analyst so far</small></div>}
+          {singles.map(p => <FocusCard key={p.rank} p={p} />)}
+          <div className="focus-footnote">
+            Window: last {data.window_days} days of episodes. Left out: {ex.game_already_played || 0} takes about games already played,
+            {" "}{ex.low_confidence_match || 0} where the player name couldn't be matched confidently.
+            Analysts are counted once per prop (repeat comments by the same person don't add up).
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function InSeasonTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
     <div className="grid">
+      <FocusBoard />
       <SimpleTable endpoint="/api/betting_props" title="Betting Props — last 7 days"
         columns={[
           {key:"full_name",label:"Player",render: row => (
