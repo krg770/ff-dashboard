@@ -36,6 +36,10 @@ fi
 # to force-reset here: the flock above guarantees nothing else is running.
 python -c "from db import get_conn; c=get_conn(); cur=c.cursor(); cur.execute(\"UPDATE pipeline_status SET is_running=false WHERE id=1\"); c.commit()" >> "$LOG_FILE" 2>&1
 
+# Opens this run's row in pipeline_runs (and marks any row left over from a
+# killed run as interrupted) so run history has a dated start for every run.
+python run_history.py begin >> "$LOG_FILE" 2>&1
+
 python poller.py >> "$LOG_FILE" 2>&1
 python worker.py >> "$LOG_FILE" 2>&1
 

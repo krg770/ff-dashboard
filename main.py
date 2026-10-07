@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from db import get_conn
 import poller
+import run_history
 
 app = FastAPI()
 app.add_middleware(
@@ -143,17 +144,37 @@ def get_latest_run():
         conn.close()
         return {"episodes": [], "quotes": []}
 
-    latest_processed_at = latest[3]
+    # processed_at is stamped per episode as it finishes, so "this run" is
+    # every episode finished since the latest productive run started. Runs
+    # from before pipeline_runs existed stamped the run's start time on
+    # every episode instead, so those fall back to an exact match.
     cur.execute(
-        """
-        SELECT id, title, published_at, processed_at
-        FROM episodes
-        WHERE processed_at = %s
-        ORDER BY published_at DESC
-        """,
-        (latest_processed_at,),
+        "SELECT started_at FROM pipeline_runs WHERE episodes_processed > 0 ORDER BY id DESC LIMIT 1"
     )
-    episodes = dict_rows(cur)
+    run_row = cur.fetchone()
+    episodes = []
+    if run_row:
+        cur.execute(
+            """
+            SELECT id, title, published_at, processed_at
+            FROM episodes
+            WHERE processed_at >= %s AND status = 'extracted'
+            ORDER BY published_at DESC
+            """,
+            (run_row[0],),
+        )
+        episodes = dict_rows(cur)
+    if not episodes:
+        cur.execute(
+            """
+            SELECT id, title, published_at, processed_at
+            FROM episodes
+            WHERE processed_at = %s
+            ORDER BY published_at DESC
+            """,
+            (latest[3],),
+        )
+        episodes = dict_rows(cur)
     episode_ids = [e["id"] for e in episodes]
 
     cur.execute(
@@ -297,6 +318,11 @@ def _log_error_message(episode_id: int) -> str:
                 last_match = m.group(1).strip()
     if not last_match:
         return "processing failed (see pipeline.log)"
+    # Failures from before error_message was stored embed the whole extraction
+    # prompt in the subprocess error text; the useful part is the timeout.
+    timed_out = re.search(r"timed out after (\d+(?:\.\d+)?) seconds", last_match)
+    if timed_out:
+        return f"claude extraction timed out after {int(float(timed_out.group(1)))}s"
     return last_match if len(last_match) <= 240 else last_match[:240] + "…"
 
 
@@ -321,7 +347,7 @@ def get_dev_console_status():
         last_duration_ms = int((last_finished - run_started).total_seconds() * 1000)
 
     cur.execute(
-        "SELECT count(*) FROM quotes q JOIN episodes e ON e.id = q.episode_id WHERE e.processed_at = %s",
+        "SELECT count(*) FROM quotes q JOIN episodes e ON e.id = q.episode_id WHERE e.processed_at >= %s",
         (run_started,),
     )
     count_last_run = cur.fetchone()[0] if run_started else 0
@@ -336,9 +362,9 @@ def get_dev_console_status():
         """
         SELECT pod.id, pod.name, pod.active,
                MAX(e.processed_at) FILTER (WHERE e.status = 'extracted') AS last_ok_at,
-               count(*) FILTER (WHERE e.status = 'error' AND e.processed_at = %s) AS errors_last_run,
+               count(*) FILTER (WHERE e.status = 'error' AND e.processed_at >= %s) AS errors_last_run,
                (SELECT count(*) FROM quotes q2 JOIN episodes e2 ON e2.id = q2.episode_id
-                WHERE e2.podcast_id = pod.id AND e2.processed_at = %s) AS items_last_run
+                WHERE e2.podcast_id = pod.id AND e2.processed_at >= %s) AS items_last_run
         FROM podcasts pod
         LEFT JOIN episodes e ON e.podcast_id = pod.id
         GROUP BY pod.id, pod.name, pod.active
@@ -385,7 +411,7 @@ def get_dev_console_status():
 
     cur.execute(
         """
-        SELECT e.id, e.processed_at, pod.name, e.title
+        SELECT e.id, e.processed_at, pod.name, e.title, e.error_message
         FROM episodes e JOIN podcasts pod ON pod.id = e.podcast_id
         WHERE e.status = 'error'
         ORDER BY e.processed_at DESC NULLS LAST
@@ -397,9 +423,9 @@ def get_dev_console_status():
         {
             "at": at.isoformat() if at else None,
             "source": name,
-            "message": f"{title}: {_log_error_message(episode_id)}",
+            "message": f"{title}: {error_message or _log_error_message(episode_id)}",
         }
-        for episode_id, at, name, title in error_rows
+        for episode_id, at, name, title, error_message in error_rows
     ]
 
     cur.close()
@@ -419,6 +445,91 @@ def get_dev_console_status():
         "imports": imports,
         "errors": errors,
     }
+
+
+def _query_rows(cur):
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+@app.get("/api/pipeline_runs")
+def get_pipeline_runs(limit: int = Query(10, ge=1, le=100)):
+    """
+    Dated history of scheduled runs, newest first. outcome is one of:
+    running, ok, errors (some episodes failed), idle (nothing to process),
+    interrupted (started but never finished - killed or crashed).
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    run_history.ensure_schema(cur, conn)
+    cur.execute(
+        """
+        SELECT id, started_at, finished_at, outcome, episodes_found, episodes_planned,
+               episodes_processed, episodes_errored, items_added, note
+        FROM pipeline_runs ORDER BY id DESC LIMIT %s
+        """,
+        (limit,),
+    )
+    runs = _query_rows(cur)
+    cur.close()
+    conn.close()
+    return {"runs": runs}
+
+
+@app.get("/api/error_episodes")
+def get_error_episodes():
+    """Episodes stuck in status=error, with why, for the retry panel."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT e.id, pod.name AS podcast, e.title, e.processed_at AS failed_at, e.error_message,
+               (e.transcript IS NOT NULL AND e.transcript <> '') AS has_transcript
+        FROM episodes e JOIN podcasts pod ON pod.id = e.podcast_id
+        WHERE e.status = 'error'
+        ORDER BY e.processed_at DESC NULLS LAST
+        """
+    )
+    rows = _query_rows(cur)
+    cur.close()
+    conn.close()
+    for r in rows:
+        r["error_message"] = r["error_message"] or _log_error_message(r["id"])
+    return {"episodes": rows}
+
+
+def _requeue_errors(episode_id=None):
+    conn = get_conn()
+    cur = conn.cursor()
+    if episode_id is None:
+        cur.execute("UPDATE episodes SET status = 'new', error_message = NULL WHERE status = 'error'")
+    else:
+        cur.execute(
+            "UPDATE episodes SET status = 'new', error_message = NULL WHERE id = %s AND status = 'error'",
+            (episode_id,),
+        )
+    n = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    return n
+
+
+@app.post("/api/episodes/{episode_id}/retry")
+def retry_episode(episode_id: int):
+    """
+    Requeues one failed episode. Takes effect on the next scheduled run
+    (worker.py picks up status='new'); an episode that already has a saved
+    transcript skips straight to extraction.
+    """
+    n = _requeue_errors(episode_id)
+    return {"ok": n == 1, "requeued": n}
+
+
+@app.post("/api/retry_errors")
+def retry_all_errors():
+    """Requeues every failed episode for the next scheduled run."""
+    return {"ok": True, "requeued": _requeue_errors()}
 
 
 def _run_poll_background(podcast_id):

@@ -9,6 +9,7 @@ Usage:
 import feedparser
 from datetime import datetime, timedelta, timezone
 from db import get_conn
+import run_history
 
 
 def content_week_for(published_at: datetime) -> datetime.date:
@@ -92,6 +93,7 @@ def poll_all(podcast_id=None):
         (datetime.now(timezone.utc), total_new),
     )
     conn.commit()
+    run_history.note_episodes_found(cur, conn, total_new)
     cur.close()
     conn.close()
     print(f"Done. {total_new} new episode(s) found.")

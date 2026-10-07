@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from faster_whisper import WhisperModel
 from db import get_conn
+import run_history
 
 WORK_DIR = Path(os.getenv("WORK_DIR", "./work"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -23,6 +24,10 @@ BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "betting_extraction_pro
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
 MAX_FANTASY_EPISODES_PER_RUN = 5
+# Very long episodes can need more than the old 600s. A timeout leaves the
+# episode at status=error, which the dashboard can retry (transcript is kept,
+# so a retry skips download + transcription and only re-runs extraction).
+EXTRACTION_TIMEOUT_SEC = int(os.getenv("EXTRACTION_TIMEOUT_SEC", "1200"))
 
 
 def download_audio(url: str, dest: Path):
@@ -61,13 +66,17 @@ def _run_claude_extraction(prompt_path: Path, transcript: str, roster_context: s
         f"---ROSTER CONTEXT---\n{roster_context}\n\n"
         f"---TRANSCRIPT---\n{transcript}"
     )
-    result = subprocess.run(
-        ["claude", "-p", prompt],
-        input=stdin_content,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            input=stdin_content,
+            capture_output=True,
+            text=True,
+            timeout=EXTRACTION_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        # Re-raised without the original message, which embeds the whole prompt.
+        raise RuntimeError(f"claude extraction timed out after {EXTRACTION_TIMEOUT_SEC}s")
     output = result.stdout.strip()
     start = output.find("[")
     end = output.rfind("]")
@@ -205,21 +214,29 @@ def process_episode(episode_id, title, audio_url, content_week, category, model,
         current_episode_id=episode_id, current_episode_title=title,
         stage="downloading", stage_started_at=datetime.now(timezone.utc),
     )
-    print(f"  Downloading episode {episode_id}...")
-    download_audio(audio_url, raw_path)
 
-    print("  Speeding up audio...")
-    speed_up_audio(raw_path, fast_path)
+    # A retried episode (extraction timed out) already has its transcript.
+    cur.execute("SELECT transcript FROM episodes WHERE id = %s", (episode_id,))
+    transcript = (cur.fetchone() or [None])[0]
 
-    update_pipeline_status(cur, conn, stage="transcribing", stage_started_at=datetime.now(timezone.utc))
-    print("  Transcribing...")
-    transcript = transcribe(fast_path, model)
+    if transcript:
+        print(f"  Reusing saved transcript for episode {episode_id} (skipping download/transcribe).")
+    else:
+        print(f"  Downloading episode {episode_id}...")
+        download_audio(audio_url, raw_path)
 
-    cur.execute(
-        "UPDATE episodes SET status = 'transcribed', transcript = %s WHERE id = %s",
-        (transcript, episode_id),
-    )
-    conn.commit()
+        print("  Speeding up audio...")
+        speed_up_audio(raw_path, fast_path)
+
+        update_pipeline_status(cur, conn, stage="transcribing", stage_started_at=datetime.now(timezone.utc))
+        print("  Transcribing...")
+        transcript = transcribe(fast_path, model)
+
+        cur.execute(
+            "UPDATE episodes SET status = 'transcribed', transcript = %s WHERE id = %s",
+            (transcript, episode_id),
+        )
+        conn.commit()
 
     update_pipeline_status(cur, conn, stage="extracting", stage_started_at=datetime.now(timezone.utc))
     roster_context = build_roster_context(cur)
@@ -241,6 +258,7 @@ def process_episode(episode_id, title, audio_url, content_week, category, model,
 
     raw_path.unlink(missing_ok=True)
     fast_path.unlink(missing_ok=True)
+    return n
 
 
 def run():
@@ -253,7 +271,7 @@ def run():
         """
         SELECT e.id, e.title, e.audio_url, e.content_week, p.category
         FROM episodes e JOIN podcasts p ON p.id = e.podcast_id
-        WHERE e.status = 'new' AND e.audio_url IS NOT NULL
+        WHERE e.status IN ('new', 'transcribed') AND e.audio_url IS NOT NULL
         ORDER BY (p.category = 'betting') DESC, e.id
         """
     )
@@ -271,8 +289,12 @@ def run():
     fantasy_episodes = [e for e in all_episodes if e[4] != "betting"][:MAX_FANTASY_EPISODES_PER_RUN]
     episodes = betting_episodes + fantasy_episodes
 
+    run_id = run_history.open_run(cur, conn)
+    run_history.set_planned(cur, conn, run_id, len(episodes))
+
     if not episodes:
         print("No new episodes to process.")
+        run_history.finish_run(cur, conn, run_id)
         cur.close()
         conn.close()
         return
@@ -302,13 +324,24 @@ def run():
     done = 0
     for episode_id, title, audio_url, content_week, category in episodes:
         try:
-            process_episode(episode_id, title, audio_url, content_week, category, model, cur, conn)
-            cur.execute("UPDATE episodes SET processed_at = %s WHERE id = %s", (run_timestamp, episode_id))
+            n = process_episode(episode_id, title, audio_url, content_week, category, model, cur, conn)
+            # Stamped when the episode actually finishes, not at run start, so
+            # the timestamp says when its data landed.
+            cur.execute(
+                "UPDATE episodes SET processed_at = %s, error_message = NULL WHERE id = %s",
+                (datetime.now(timezone.utc), episode_id),
+            )
             conn.commit()
+            run_history.add_progress(cur, conn, run_id, processed=1, items=n)
         except Exception as e:
             print(f"  ERROR processing episode {episode_id}: {e}")
-            cur.execute("UPDATE episodes SET status = 'error' WHERE id = %s", (episode_id,))
+            conn.rollback()
+            cur.execute(
+                "UPDATE episodes SET status = 'error', error_message = %s, processed_at = %s WHERE id = %s",
+                (str(e)[:500], datetime.now(timezone.utc), episode_id),
+            )
             conn.commit()
+            run_history.add_progress(cur, conn, run_id, errored=1)
         finally:
             done += 1
             elapsed_total = (datetime.now(timezone.utc) - run_timestamp).total_seconds()
@@ -323,6 +356,7 @@ def run():
         is_running=False, current_episode_id=None, current_episode_title=None,
         stage=None, last_finished_at=datetime.now(timezone.utc),
     )
+    run_history.finish_run(cur, conn, run_id)
 
     cur.close()
     conn.close()
