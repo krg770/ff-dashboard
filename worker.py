@@ -7,6 +7,7 @@ Usage:
     python worker.py
 """
 import os
+import fcntl
 import json
 import subprocess
 import requests
@@ -23,6 +24,7 @@ EXTRACTION_PROMPT_PATH = Path(__file__).parent / "extraction_prompt.md"
 BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "betting_extraction_prompt.md"
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
+TRANSCRIBE_LOCK = "/tmp/whisper_transcribe.lock"
 MAX_FANTASY_EPISODES_PER_RUN = 5
 # Very long episodes can need more than the old 600s. A timeout leaves the
 # episode at status=error, which the dashboard can retry (transcript is kept,
@@ -47,11 +49,17 @@ def speed_up_audio(src: Path, dest: Path, factor: str = SPEED_FACTOR):
 
 
 def transcribe(audio_path: Path, model: WhisperModel) -> str:
-    segments, _info = model.transcribe(str(audio_path))
-    lines = []
-    for seg in segments:
-        lines.append(f"[{seg.start:.0f}s] {seg.text.strip()}")
-    return "\n".join(lines)
+    # One transcription at a time across ALL dashboards (ff, stock, nhl share
+    # this lock file). Each worker uses most of the CPU on its own; running
+    # two or three at once oversubscribes the cores and every one of them
+    # slows to a crawl (observed: a ~5 min episode taking 40+ min).
+    with open(TRANSCRIBE_LOCK, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        segments, _info = model.transcribe(str(audio_path))
+        lines = []
+        for seg in segments:
+            lines.append(f"[{seg.start:.0f}s] {seg.text.strip()}")
+        return "\n".join(lines)
 
 
 def build_roster_context(cur) -> str:

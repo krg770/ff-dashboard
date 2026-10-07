@@ -4,3 +4,5 @@ requests
 faster-whisper
 python-dotenv
 nflreadpy[pandas]
+# faster-whisper 1.2.1 breaks on PyAV 19 (open() metadata_errors)
+av<19
