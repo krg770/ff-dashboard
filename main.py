@@ -1530,18 +1530,12 @@ def _consensus_score(analysts, shows, agreement, sharp, recent_hours, fantasy_al
     return total, [{"label": l, "points": pts, "max": mx} for l, pts, mx in parts]
 
 
-@app.get("/api/best_bets")
-def get_best_bets(days: int = Query(7, ge=1, le=14)):
+def _prop_groups(days):
     """
-    A ranked focus list: which player props are the most analysts talking
-    about for an UPCOMING game, most-discussed first. Informational
-    comparison of what the podcasts are saying - never a recommendation.
-
-    A "pick" is one (player, prop type, game). The game is inferred as the
-    player's next scheduled game on/after the episode's publish date (not
-    when we happened to process it). Takes whose game has already been
-    played are dropped; low-confidence player matches are dropped rather
-    than risk attributing a take to the wrong player.
+    The valid, upcoming player-prop takes from the last N days, grouped
+    by (player, bet type, game date), plus the fantasy-buzz and injury data
+    for those players. Shared by the prop Focus List and the per-player view
+    so they always agree on which takes count.
     """
     conn = get_conn()
     cur = conn.cursor()
@@ -1619,6 +1613,24 @@ def get_best_bets(days: int = Query(7, ge=1, le=14)):
         injuries = {pid: s for pid, s in cur.fetchall() if s in ("Out", "Doubtful", "Questionable")}
     cur.close()
     conn.close()
+
+    return groups, excluded, fantasy, injuries
+
+
+@app.get("/api/best_bets")
+def get_best_bets(days: int = Query(7, ge=1, le=14)):
+    """
+    A ranked focus list: which player props are the most analysts talking
+    about for an UPCOMING game, most-discussed first. Informational
+    comparison of what the podcasts are saying - never a recommendation.
+
+    A "pick" is one (player, prop type, game). The game is inferred as the
+    player's next scheduled game on/after the episode's publish date (not
+    when we happened to process it). Takes whose game has already been
+    played are dropped; low-confidence player matches are dropped rather
+    than risk attributing a take to the wrong player.
+    """
+    groups, excluded, fantasy, injuries = _prop_groups(days)
 
     now = datetime.now(timezone.utc)
     picks = []
@@ -1729,6 +1741,273 @@ BET_TYPE_NAMES = {
     "longest_reception": "Longest Rec", "longest_rush": "Longest Rush",
     "game_leader": "Game Leader", "player_other": "Other",
 }
+
+
+@app.get("/api/player_buzz")
+def get_player_buzz(days: int = Query(7, ge=1, le=14)):
+    """
+    Who the analysts are talking about most for an upcoming game, across ALL
+    prop types. The prop Focus List needs two analysts to land on the exact
+    same prop (same player, same bet type), which is rare; this counts an
+    analyst once per player per game however many different props they
+    mention, so three analysts who each like a different Kyle Pitts prop show
+    up as three analysts on Kyle Pitts. Uses the same valid takes as
+    /api/best_bets (see _prop_groups).
+    """
+    groups, excluded, fantasy, injuries = _prop_groups(days)
+    merged = {}
+    for (player_id, bet_type, game_date), items in groups.items():
+        merged.setdefault((player_id, game_date), []).extend(items)
+
+    now = datetime.now(timezone.utc)
+    players = []
+    for (player_id, game_date), items in merged.items():
+        items.sort(key=lambda it: it["published_at"], reverse=True)
+        by_analyst = {}
+        for it in items:
+            by_analyst.setdefault(_analyst_key(it["speaker"], it["show_name"]), []).append(it)
+        analysts = len(by_analyst)
+        shows = len({it["pod_id"] for it in items})
+
+        # Each analyst's overall lean on this player: more favorable props
+        # than unfavorable = for, the reverse = against, a tie = no lean.
+        fav = unfav = 0
+        for its in by_analyst.values():
+            net = sum(1 for i in its if i["lean"] == "favorable") - sum(1 for i in its if i["lean"] == "unfavorable")
+            fav += net > 0
+            unfav += net < 0
+        if fav > unfav:
+            direction = "for"
+        elif unfav > fav:
+            direction = "against"
+        elif fav and unfav:
+            direction = "split"
+        else:
+            direction = "neutral"
+        agreement = (max(fav, unfav) / (fav + unfav)) if (fav + unfav) else 0.5
+        sharp = len({k for k, its in by_analyst.items() if any(i["sharp_or_public"] == "sharp" for i in its)})
+        newest = items[0]["published_at"]
+        recent_hours = (now - newest).total_seconds() / 3600
+        rising, falling = fantasy.get(player_id, (0, 0))
+        fantasy_aligned = (direction == "for" and rising > falling) or (direction == "against" and falling > rising)
+        fantasy_conflict = (direction == "for" and falling > rising) or (direction == "against" and rising > falling)
+        injury = injuries.get(player_id)
+        score, breakdown = _consensus_score(
+            analysts, shows, agreement if direction != "neutral" else 0.5, sharp, recent_hours, fantasy_aligned, injury
+        )
+
+        bets = {}
+        for it in items:
+            b = bets.setdefault(it["bet_type"], {"analysts": set(), "lines": []})
+            b["analysts"].add(_analyst_key(it["speaker"], it["show_name"]))
+            if it["line_context"] and it["line_context"] not in b["lines"]:
+                b["lines"].append(it["line_context"])
+        bet_list = sorted(
+            ({"bet_type": bt, "label": BET_TYPE_NAMES.get(bt, bt), "analysts": len(b["analysts"]), "lines": b["lines"][:3]}
+             for bt, b in bets.items()),
+            key=lambda b: -b["analysts"],
+        )
+
+        first = items[0]
+        takes = []
+        for its in by_analyst.values():
+            t = its[0]
+            takes.append({
+                "analyst": t["speaker"] or t["show_name"], "show": t["show_name"], "lean": t["lean"],
+                "bet": BET_TYPE_NAMES.get(t["bet_type"], t["bet_type"]), "line": t["line_context"],
+                "quote": t["quote_text"], "why": t["betting_relevance"], "at": t["published_at"],
+                "also": len({i["bet_type"] for i in its}) - 1,
+            })
+        players.append({
+            "player_id": player_id, "full_name": first["full_name"], "team": first["team"],
+            "position": first["position"], "game_date": game_date, "game_week": first["game_week"],
+            "opponent": first["opponent"], "is_home": first["is_home"],
+            "analysts": analysts, "shows": shows, "lean_for": fav, "lean_against": unfav,
+            "direction": direction, "sharp_count": sharp, "bets": bet_list,
+            "score": score, "score_breakdown": breakdown,
+            "fantasy_rising": rising, "fantasy_falling": falling,
+            "fantasy_aligned": fantasy_aligned, "fantasy_conflict": fantasy_conflict,
+            "injury_status": injury, "latest_at": newest, "takes": takes,
+        })
+
+    players.sort(key=lambda p: (-p["analysts"], -p["shows"], -len(p["bets"]), -p["score"], -p["latest_at"].timestamp()))
+    for i, p in enumerate(players, 1):
+        p["rank"] = i
+    return {"window_days": days, "players": players, "excluded": excluded}
+
+
+TEAM_BET_NAMES = {
+    "spread": "Spread", "moneyline": "Moneyline", "game_total": "Game Total", "team_total": "Team Total",
+    "first_half_spread": "1st-Half Spread", "first_half_total": "1st-Half Total",
+}
+
+
+def _team_consensus_score(analysts, shows, share_for, sharp, recent_hours, days_to_game):
+    """0-100 strength of agreement on a team/game bet - NOT a probability it
+    hits. Same shape as the prop score, without the fantasy/injury terms."""
+    parts = [
+        ("Analysts talking about it", round(min(analysts, 5) / 5 * 50), 50),
+        ("Different shows", round(min(shows, 3) / 3 * 15), 15),
+        ("Nobody on the other side", round(share_for * 20), 20),
+        ("Called sharp money", 5 if sharp else 0, 5),
+        ("Discussed in last 48h", 5 if recent_hours is not None and recent_hours <= 48 else 0, 5),
+        ("Game is within 3 days", 5 if days_to_game is not None and days_to_game <= 3 else 0, 5),
+    ]
+    total = max(0, min(100, sum(p[1] for p in parts)))
+    return total, [{"label": l, "points": pts, "max": mx} for l, pts, mx in parts]
+
+
+def _flip_line(line_context):
+    """A spread line from the other side's point of view: -3.5 <-> +3.5."""
+    m = re.fullmatch(r"\s*([+-])(\d+(?:\.\d+)?)\s*", line_context or "")
+    if not m:
+        return line_context
+    return ("+" if m.group(1) == "-" else "-") + m.group(2)
+
+
+@app.get("/api/game_consensus")
+def get_game_consensus(days: int = Query(7, ge=1, le=14)):
+    """
+    Team and whole-game bets (spreads, moneylines, totals) ranked by how many
+    different analysts are on the same side of the same game. Backing the
+    Seahawks and fading the 49ers are the same side, so they count together;
+    the other side is shown as 'on the other side'. Neutral mentions don't
+    take a side and are left out. Informational only.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT tbq.subject_type, tbq.team, tbq.opponent AS said_opponent, tbq.bet_type, tbq.side, tbq.lean,
+               tbq.sharp_or_public, tbq.line_context, tbq.quote_text, tbq.speaker, tbq.betting_relevance,
+               pod.id AS pod_id, pod.name AS show_name, e.published_at,
+               g.week AS game_week, g.opponent, g.is_home, g.game_date
+        FROM team_bet_quotes tbq
+        JOIN episodes e ON e.id = tbq.episode_id
+        JOIN podcasts pod ON pod.id = e.podcast_id
+        LEFT JOIN LATERAL (
+            SELECT week, opponent, is_home, game_date
+            FROM team_schedule ts
+            WHERE ts.team = tbq.team AND ts.season = %s AND ts.game_date IS NOT NULL
+              AND ts.game_date >= e.published_at::date
+              AND (tbq.opponent IS NULL OR ts.opponent = tbq.opponent)
+            ORDER BY ts.game_date
+            LIMIT 1
+        ) g ON true
+        WHERE e.published_at >= now() - make_interval(days => %s)
+          AND COALESCE(tbq.timeframe, '') NOT IN ('past', 'futures')
+        ORDER BY e.published_at DESC
+        """,
+        (SEASON, days),
+    )
+    rows = dict_rows(cur)
+    cur.execute("SELECT abbrev, name FROM teams")
+    team_names = dict(cur.fetchall())
+    cur.close()
+    conn.close()
+
+    today = date.today()
+    excluded = {"game_already_played": 0, "no_scheduled_game": 0, "no_side_taken": 0, "unsupported_bet_type": 0}
+    groups = {}
+    for r in rows:
+        bt = r["bet_type"]
+        if bt not in TEAM_BET_NAMES:
+            excluded["unsupported_bet_type"] += 1
+            continue
+        if not r["game_date"]:
+            excluded["no_scheduled_game"] += 1
+            continue
+        if r["game_date"] < today:
+            excluded["game_already_played"] += 1
+            continue
+        if r["lean"] == "neutral":
+            excluded["no_side_taken"] += 1
+            continue
+        game_key = (r["game_date"], frozenset((r["team"], r["opponent"])))
+        against = r["lean"] == "unfavorable"
+        if bt in ("game_total", "first_half_total", "team_total"):
+            if r["side"] not in ("over", "under"):
+                excluded["no_side_taken"] += 1
+                continue
+            side = r["side"] if not against else ("under" if r["side"] == "over" else "over")
+            backed = r["team"] if bt == "team_total" else None
+            stance, line = side, r["line_context"]
+        else:
+            backed = r["opponent"] if against else r["team"]
+            stance = "backing"
+            line = _flip_line(r["line_context"]) if against and bt != "moneyline" else r["line_context"]
+        groups.setdefault((game_key, bt, backed, stance), []).append({**r, "_line": line})
+
+    now = datetime.now(timezone.utc)
+    built = {}
+    for key, items in groups.items():
+        by_analyst = {}
+        for it in items:
+            by_analyst.setdefault(_analyst_key(it["speaker"], it["show_name"]), it)
+        built[key] = (items, list(by_analyst.values()))
+
+    def opposite_key(key):
+        game_key, bt, backed, stance = key
+        if stance == "backing":
+            teams = list(game_key[1])
+            other = teams[0] if teams[1] == backed else teams[1] if teams[0] == backed else None
+            return (game_key, bt, other, "backing") if other else None
+        return (game_key, bt, backed, "under" if stance == "over" else "over")
+
+    picks = []
+    for key, (items, takes) in built.items():
+        game_key, bt, backed, stance = key
+        analysts = len(takes)
+        shows = len({t["pod_id"] for t in takes})
+        opp = built.get(opposite_key(key))
+        opp_analysts = len(opp[1]) if opp else 0
+        sharp = sum(1 for t in takes if t["sharp_or_public"] == "sharp")
+        newest = max(t["published_at"] for t in takes)
+        first = items[0]
+        days_to_game = (first["game_date"] - today).days
+        score, breakdown = _team_consensus_score(
+            analysts, shows, analysts / (analysts + opp_analysts), sharp,
+            (now - newest).total_seconds() / 3600, days_to_game,
+        )
+        lines = []
+        for it in items:
+            if it["_line"] and it["_line"] not in lines:
+                lines.append(it["_line"])
+        teams = sorted(game_key[1])
+        matchup_home = first["team"] if first["is_home"] else first["opponent"]
+        matchup_away = first["opponent"] if first["is_home"] else first["team"]
+        if backed:
+            name = team_names.get(backed, backed)
+        else:
+            name = f'{team_names.get(matchup_away, matchup_away)} @ {team_names.get(matchup_home, matchup_home)}'
+        picks.append({
+            "name": name, "backed_team": backed, "bet_type": bt, "bet_label": TEAM_BET_NAMES[bt], "stance": stance,
+            "away": matchup_away, "home": matchup_home, "game_date": first["game_date"], "game_week": first["game_week"],
+            "analysts": analysts, "shows": shows, "opposing_analysts": opp_analysts, "sharp_count": sharp,
+            "lines": lines[:4], "score": score, "score_breakdown": breakdown, "latest_at": newest,
+            "takes": [
+                {"analyst": t["speaker"] or t["show_name"], "show": t["show_name"], "lean": t["lean"],
+                 "line": t["line_context"], "quote": t["quote_text"], "why": t["betting_relevance"], "at": t["published_at"]}
+                for t in takes
+            ],
+        })
+
+    picks.sort(key=lambda p: (-p["analysts"], -p["shows"], -p["score"], -p["sharp_count"], -p["latest_at"].timestamp()))
+    for i, p in enumerate(picks, 1):
+        p["rank"] = i
+
+    games = {}
+    for p in picks:
+        g = games.setdefault((p["game_date"], p["away"], p["home"]), {
+            "away": p["away"], "home": p["home"], "game_date": p["game_date"], "game_week": p["game_week"],
+            "analyst_mentions": 0, "bets": 0, "top": [],
+        })
+        g["analyst_mentions"] += p["analysts"]
+        g["bets"] += 1
+        if len(g["top"]) < 3:
+            g["top"].append(f'{p["name"]} {p["bet_label"]}')
+    game_list = sorted(games.values(), key=lambda g: (-g["analyst_mentions"], g["game_date"]))[:10]
+    return {"window_days": days, "picks": picks, "games": game_list, "excluded": excluded}
 
 
 @app.get("/api/injuries")

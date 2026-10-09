@@ -17,12 +17,14 @@ from faster_whisper import WhisperModel
 from db import get_conn
 import run_history
 from extraction_parse import parse_extraction_output
+from team_bets import build_team_context, insert_team_bet_quotes, mark_extracted
 
 WORK_DIR = Path(os.getenv("WORK_DIR", "./work"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 EXTRACTION_PROMPT_PATH = Path(__file__).parent / "extraction_prompt.md"
 BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "betting_extraction_prompt.md"
+TEAM_BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "team_betting_extraction_prompt.md"
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
 TRANSCRIBE_LOCK = "/tmp/whisper_transcribe.lock"
@@ -100,6 +102,10 @@ def run_extraction(transcript: str, roster_context: str) -> list:
 
 def run_betting_extraction(transcript: str, roster_context: str) -> list:
     return _run_claude_extraction(BETTING_EXTRACTION_PROMPT_PATH, transcript, roster_context)
+
+
+def run_team_extraction(transcript: str, team_context: str) -> list:
+    return _run_claude_extraction(TEAM_BETTING_EXTRACTION_PROMPT_PATH, transcript, team_context)
 
 
 def update_pipeline_status(cur, conn, **fields):
@@ -246,6 +252,14 @@ def process_episode(episode_id, title, audio_url, content_week, category, model,
         bet_quotes = run_betting_extraction(transcript, roster_context)
         insert_bet_quotes(cur, episode_id, content_week, bet_quotes)
         n = len(bet_quotes)
+
+        # Second pass: team / whole-game bets (spreads, moneylines, totals).
+        # Raises on an unusable result, so a failure leaves the episode in
+        # error (retryable) instead of silently missing its team bets.
+        print("  Extracting team & game bets...")
+        team_items = run_team_extraction(transcript, build_team_context(cur))
+        n += insert_team_bet_quotes(cur, episode_id, content_week, team_items)
+        mark_extracted(cur, episode_id, len(team_items))
     else:
         print("  Extracting quotes...")
         quotes = run_extraction(transcript, roster_context)
