@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from faster_whisper import WhisperModel
 from db import get_conn
 import run_history
+from extraction_parse import parse_extraction_output
 
 WORK_DIR = Path(os.getenv("WORK_DIR", "./work"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -85,21 +86,12 @@ def _run_claude_extraction(prompt_path: Path, transcript: str, roster_context: s
     except subprocess.TimeoutExpired:
         # Re-raised without the original message, which embeds the whole prompt.
         raise RuntimeError(f"claude extraction timed out after {EXTRACTION_TIMEOUT_SEC}s")
-    output = result.stdout.strip()
-    start = output.find("[")
-    end = output.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        output = output[start:end + 1]
-    if output.startswith("```"):
-        output = output.strip("`")
-        if output.startswith("json"):
-            output = output[4:]
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError:
-        print("WARNING: could not parse extraction output as JSON. Raw output:")
-        print(output[:500])
-        return []
+    # Raises (-> episode is recorded as an error and can be retried) rather than
+    # returning [] when the output is unusable; see extraction_parse.py.
+    items = parse_extraction_output(result.stdout)
+    if not items and len(transcript) > 40000:
+        print(f"NOTE: empty extraction for a long transcript ({len(transcript)} chars) - worth a look.")
+    return items
 
 
 def run_extraction(transcript: str, roster_context: str) -> list:
