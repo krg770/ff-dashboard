@@ -7,6 +7,7 @@ Usage:
     python worker.py
 """
 import os
+import time
 import fcntl
 import json
 import subprocess
@@ -28,6 +29,24 @@ TEAM_BETTING_EXTRACTION_PROMPT_PATH = Path(__file__).parent / "team_betting_extr
 WHISPER_MODEL_SIZE = "small"
 SPEED_FACTOR = "1.5"
 TRANSCRIBE_LOCK = "/tmp/whisper_transcribe.lock"
+# The NHL worker raises this flag while it has episodes to process (NHL picks are
+# only useful before puck drop). Wait for it to clear before starting the next
+# transcription - delayed, never skipped. Ignored if stale (30 min) or after 1h.
+NHL_PRIORITY_FLAG = "/tmp/whisper_nhl_priority"
+
+
+def _yield_to_nhl(max_wait_seconds=3600):
+    waited = 0
+    while waited < max_wait_seconds and os.path.exists(NHL_PRIORITY_FLAG):
+        try:
+            if time.time() - os.path.getmtime(NHL_PRIORITY_FLAG) > 1800:
+                return
+        except OSError:
+            return
+        if waited == 0:
+            print("  NHL episodes are being processed - waiting for them before transcribing...")
+        time.sleep(15)
+        waited += 15
 MAX_FANTASY_EPISODES_PER_RUN = 5
 # Very long episodes can need more than the old 600s. A timeout leaves the
 # episode at status=error, which the dashboard can retry (transcript is kept,
@@ -56,6 +75,7 @@ def transcribe(audio_path: Path, model: WhisperModel) -> str:
     # this lock file). Each worker uses most of the CPU on its own; running
     # two or three at once oversubscribes the cores and every one of them
     # slows to a crawl (observed: a ~5 min episode taking 40+ min).
+    _yield_to_nhl()
     with open(TRANSCRIBE_LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         segments, _info = model.transcribe(str(audio_path))
