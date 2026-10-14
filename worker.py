@@ -35,18 +35,21 @@ TRANSCRIBE_LOCK = "/tmp/whisper_transcribe.lock"
 NHL_PRIORITY_FLAG = "/tmp/whisper_nhl_priority"
 
 
+def _nhl_priority_active():
+    try:
+        return time.time() - os.path.getmtime(NHL_PRIORITY_FLAG) <= 1800
+    except OSError:
+        return False
+
+
 def _yield_to_nhl(max_wait_seconds=3600):
     waited = 0
-    while waited < max_wait_seconds and os.path.exists(NHL_PRIORITY_FLAG):
-        try:
-            if time.time() - os.path.getmtime(NHL_PRIORITY_FLAG) > 1800:
-                return
-        except OSError:
-            return
+    while waited < max_wait_seconds and _nhl_priority_active():
         if waited == 0:
             print("  NHL episodes are being processed - waiting for them before transcribing...")
         time.sleep(15)
         waited += 15
+    return waited
 MAX_FANTASY_EPISODES_PER_RUN = 5
 # Very long episodes can need more than the old 600s. A timeout leaves the
 # episode at status=error, which the dashboard can retry (transcript is kept,
@@ -80,8 +83,18 @@ def transcribe(audio_path: Path, model: WhisperModel) -> str:
         fcntl.flock(lock, fcntl.LOCK_EX)
         segments, _info = model.transcribe(str(audio_path))
         lines = []
+        paused = 0
         for seg in segments:
             lines.append(f"[{seg.start:.0f}s] {seg.text.strip()}")
+            # An NHL episode is waiting for the transcriber: pause HERE (a segment
+            # boundary, every few seconds) instead of making it wait out the rest of
+            # this possibly hour-long episode. Release the lock, wait, take it back
+            # and carry on exactly where we left off. Capped so we can't be starved.
+            if paused < 7200 and _nhl_priority_active():
+                print("  Pausing transcription for NHL episodes...")
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                paused += _yield_to_nhl()
+                fcntl.flock(lock, fcntl.LOCK_EX)
         return "\n".join(lines)
 
 
