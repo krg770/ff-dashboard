@@ -18,6 +18,7 @@ from faster_whisper import WhisperModel
 from db import get_conn
 import run_history
 from extraction_parse import parse_extraction_output
+from fast_transcribe import transcribe_parallel
 from team_bets import build_team_context, insert_team_bet_quotes, mark_extracted
 
 WORK_DIR = Path(os.getenv("WORK_DIR", "./work"))
@@ -51,6 +52,7 @@ def _yield_to_nhl(max_wait_seconds=3600):
         waited += 15
     return waited
 MAX_FANTASY_EPISODES_PER_RUN = 5
+MAX_BETTING_EPISODES_PER_RUN = 12
 # Very long episodes can need more than the old 600s. A timeout leaves the
 # episode at status=error, which the dashboard can retry (transcript is kept,
 # so a retry skips download + transcription and only re-runs extraction).
@@ -81,6 +83,24 @@ def transcribe(audio_path: Path, model: WhisperModel) -> str:
     _yield_to_nhl()
     with open(TRANSCRIBE_LOCK, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+
+        # Parallel chunks (several times faster than one process; see
+        # fast_transcribe.py). Run in ~6-minute waves so an NHL episode that
+        # shows up waits at most one wave, not the rest of the episode.
+        paused_total = [0]
+
+        def pause_hook():
+            if paused_total[0] < 7200 and _nhl_priority_active():
+                print("  Pausing transcription for NHL episodes...")
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                paused_total[0] += _yield_to_nhl()
+                fcntl.flock(lock, fcntl.LOCK_EX)
+
+        try:
+            return transcribe_parallel(audio_path, WHISPER_MODEL_SIZE, pause_hook=pause_hook, chunk_seconds=360)
+        except Exception as e:
+            print(f"  parallel transcription failed ({e}); falling back to a single process")
+
         segments, _info = model.transcribe(str(audio_path))
         lines = []
         paused = 0
@@ -319,7 +339,7 @@ def run():
         SELECT e.id, e.title, e.audio_url, e.content_week, p.category
         FROM episodes e JOIN podcasts p ON p.id = e.podcast_id
         WHERE e.status IN ('new', 'transcribed') AND e.audio_url IS NOT NULL
-        ORDER BY (p.category = 'betting') DESC, e.id
+        ORDER BY (p.category = 'betting') DESC, e.published_at DESC
         """
     )
     all_episodes = cur.fetchall()
@@ -332,7 +352,12 @@ def run():
     # backlog takes a few extra runs to clear," never "betting has to wait
     # behind it." Uncapped betting episodes are rare enough (a handful of
     # shows) that no cap is needed on that side.
-    betting_episodes = [e for e in all_episodes if e[4] == "betting"]
+    #
+    # Newest first, and betting is capped per run too now that there are a dozen
+    # NFL betting shows: this week's slate matters most, and an unbounded run
+    # (a day of audio) would block every newer episode behind it. The rest
+    # simply wait for the next run.
+    betting_episodes = [e for e in all_episodes if e[4] == "betting"][:MAX_BETTING_EPISODES_PER_RUN]
     fantasy_episodes = [e for e in all_episodes if e[4] != "betting"][:MAX_FANTASY_EPISODES_PER_RUN]
     episodes = betting_episodes + fantasy_episodes
 

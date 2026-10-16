@@ -12,6 +12,9 @@ from db import get_conn
 import episode_filter
 import run_history
 
+# Days an episode stays worth transcribing, by show category.
+MAX_AGE_DAYS = {"betting": 5, "fantasy": 7}
+
 
 def content_week_for(published_at: datetime) -> datetime.date:
     """
@@ -79,8 +82,22 @@ def poll_all(podcast_id=None):
 
             week = content_week_for(published_at)
 
+            # Moving forward only: a newly added show's feed carries its whole back
+            # catalog (hundreds of episodes). Betting talk goes stale within the
+            # week, so anything older than the cutoff is recorded as skipped, not queued.
+            max_age = MAX_AGE_DAYS.get(category, 7)
+            if datetime.now(timezone.utc) - published_at > timedelta(days=max_age):
+                cur.execute(
+                    """
+                    INSERT INTO episodes (podcast_id, guid, title, published_at, audio_url, status, content_week, error_message)
+                    VALUES (%s, %s, %s, %s, %s, 'skipped', %s, %s)
+                    """,
+                    (podcast_id, guid, title, published_at, audio_url, week, f"skipped: older than {max_age} days"),
+                )
+                continue
+
             # Several betting shows cover every sport; don't spend an hour of
-            # transcription on an episode that is clearly not about football.
+            # transcription on an episode that is clearly not about the NFL.
             reason = episode_filter.skip_reason(name, category, title)
             if reason:
                 cur.execute(

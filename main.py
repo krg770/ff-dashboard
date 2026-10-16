@@ -2010,6 +2010,51 @@ def get_game_consensus(days: int = Query(7, ge=1, le=14)):
     return {"window_days": days, "picks": picks, "games": game_list, "excluded": excluded}
 
 
+@app.get("/api/team_bets")
+def get_team_bets(days: int = Query(7, ge=1, le=30)):
+    """
+    Every team / whole-game bet mentioned in the last `days` days (spread,
+    moneyline, totals, ...), newest first - the raw rows behind the Games &
+    teams view of the Betting Board, the team-bet counterpart of
+    /api/betting_props. Past recaps are included but flagged by timeframe.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT CASE WHEN tbq.subject_type = 'game' THEN COALESCE(t.name, tbq.team) || ' vs ' || COALESCE(ot.name, tbq.opponent, '?')
+                    ELSE COALESCE(t.name, tbq.raw_mention) END AS subject,
+               tbq.subject_type, tbq.bet_type, tbq.side, tbq.line_context, tbq.lean, tbq.timeframe, tbq.speaker,
+               pod.name AS source_podcast, tbq.quote_text, tbq.betting_relevance,
+               e.published_at AS created_at,
+               g.week AS game_week, g.opponent AS game_opponent, g.is_home AS game_is_home, g.game_date
+        FROM team_bet_quotes tbq
+        JOIN episodes e ON e.id = tbq.episode_id
+        JOIN podcasts pod ON pod.id = e.podcast_id
+        LEFT JOIN teams t ON t.abbrev = tbq.team
+        LEFT JOIN teams ot ON ot.abbrev = tbq.opponent
+        LEFT JOIN LATERAL (
+            SELECT week, opponent, is_home, game_date
+            FROM team_schedule ts
+            WHERE ts.team = tbq.team AND ts.season = %s AND ts.game_date IS NOT NULL
+              AND ts.game_date >= e.published_at::date
+              AND (tbq.opponent IS NULL OR ts.opponent = tbq.opponent)
+            ORDER BY ts.game_date
+            LIMIT 1
+        ) g ON true
+        WHERE e.published_at >= now() - make_interval(days => %s)
+        ORDER BY e.published_at DESC, tbq.id
+        """,
+        (SEASON, days),
+    )
+    rows = dict_rows(cur)
+    cur.close()
+    conn.close()
+    for r in rows:
+        r["bet_label"] = TEAM_BET_NAMES.get(r["bet_type"], r["bet_type"])
+    return rows
+
+
 @app.get("/api/injuries")
 def get_injuries():
     """

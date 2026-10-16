@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Fantasy Football Command Center</title>
+<title>NFL Betting Command Center</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -1811,8 +1811,34 @@ function InSeasonTab() {
   const waiting = "Waiting on season data (starts Week 1)";
   return (
     <div className="grid">
-      <FocusBoard />
-      <SimpleTable endpoint="/api/betting_props" title="Betting Props — last 7 days"
+      <SimpleTable endpoint="/api/team_bets" title="Team & Game Bets — last 7 days"
+        columns={[
+          {key:"subject",label:"Bet on",render: row => <strong>{row.subject}</strong>},
+          {key:"bet_label",label:"Type"},
+          {key:"line_context",label:"Line",render: row => [row.side, row.line_context].filter(Boolean).join(" ") || "—"},
+          {key:"lean",label:"Lean",render: row => <LeanBadge lean={row.lean} />},
+          {key:"game_date",label:"Game",render: row => {
+            if (!row.game_date) return "—";
+            const gd = new Date(row.game_date + "T12:00:00");
+            const isPast = gd < new Date();
+            const loc = row.game_is_home ? "vs" : "@";
+            return (
+              <span style={{color: isPast ? "#6b7280" : "#e4e6eb"}}>
+                Wk{row.game_week} {loc} {row.game_opponent}
+                <div style={{fontSize:11}}>{gd.toLocaleDateString(undefined,{month:"numeric",day:"numeric"})}{isPast && " (played)"}</div>
+              </span>
+            );
+          }},
+          {key:"created_at",label:"Aired",render: row => timeAgo(row.created_at)},
+          {key:"source_podcast",label:"Source",render: row => (
+            <span title={row.quote_text}>
+              {row.speaker}
+              <div style={{color:"#6b7280",fontSize:11}}>{row.source_podcast}</div>
+            </span>
+          )},
+        ]}
+        emptyText="No team or game bets extracted yet" timestampKey="created_at" />
+      <SimpleTable endpoint="/api/betting_props" title="Player Props — last 7 days"
         columns={[
           {key:"full_name",label:"Player",render: row => (
             <span>
@@ -1855,12 +1881,6 @@ function InSeasonTab() {
             <BuzzBadge podcastCount={row.buzz_podcast_count} risingCount={row.buzz_rising_count} fallingCount={row.buzz_falling_count} />
           )},
         ]}
-        emptyText={waiting} />
-      <SimpleTable endpoint="/api/trade_buy" title="Trade Targets — Buy Low"
-        columns={[{key:"full_name",label:"Player"},{key:"preseason_adp",label:"Preseason ADP"},{key:"season_fantasy_points",label:"Season Pts"}]}
-        emptyText={waiting} />
-      <SimpleTable endpoint="/api/trade_sell" title="Trade Targets — Sell High"
-        columns={[{key:"full_name",label:"Player"},{key:"preseason_adp",label:"Preseason ADP"},{key:"season_fantasy_points",label:"Season Pts"}]}
         emptyText={waiting} />
     </div>
   );
@@ -2129,17 +2149,41 @@ function MyTeamsTab({ onSelectPlayer }) {
   );
 }
 
+// The dashboard is about NFL betting of all kinds (player props, game and team
+// bets, exact props). The fantasy-only tabs (My Teams, Draft, Salary, Waiver Wire,
+// Trends, Reliability) are retired from the UI; their code is still in this file
+// and in git history.
+const NFL_TABS = [
+  { id: "board", label: "Betting Board" },
+  { id: "news", label: "Latest News" },
+  { id: "bets", label: "All Bets" },
+];
+
+function initialNflTab() {
+  const fromHash = (window.location.hash || "").replace("#", "");
+  if (NFL_TABS.some(t => t.id === fromHash)) return fromHash;
+  try {
+    const saved = localStorage.getItem("nfl-tab");
+    if (NFL_TABS.some(t => t.id === saved)) return saved;
+  } catch (e) {}
+  return "board";
+}
+
 function App() {
-  const [tab, setTab] = useState("draft");
+  const [tab, setTabState] = useState(initialNflTab);
+  function setTab(id) {
+    setTabState(id);
+    window.location.hash = id;
+    try { localStorage.setItem("nfl-tab", id); } catch (e) {}
+  }
   const [devOpen, setDevOpen] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
   return (
     <React.Fragment>
       <header>
-        <h1>Fantasy Football Command Center</h1>
+        <h1>NFL Betting Command Center</h1>
         <span style={{display: "flex", alignItems: "center", gap: 10}}>
           <PlayerSearch onSelect={setSelectedPlayerId} />
-          <span style={{color:"#6b7280", fontSize:12}}>10-Team League</span>
           <button className="dev-toggle" onClick={() => setDevOpen(o => !o)}>
             {devOpen ? "▾ Dev" : "▸ Dev"}
           </button>
@@ -2147,26 +2191,20 @@ function App() {
       </header>
       <PlayerPanel playerId={selectedPlayerId} onClose={() => setSelectedPlayerId(null)} />
       <DevPanel open={devOpen} />
+      <div style={{ background: "#2a2210", borderBottom: "1px solid #4a3a10", color: "#fbbf24", padding: "6px 20px", fontSize: 11.5 }}>
+        For comparison and trend only. This shows what podcast analysts said about NFL bets; it is not a recommendation, and nothing here is used for any monetary decision.
+      </div>
       <LatestUpdate onSelectPlayer={setSelectedPlayerId} />
       <PipelineStatusBar />
       <div className="tabs">
-        <div className={"tab " + (tab === "news" ? "active" : "")} onClick={() => setTab("news")}>Latest News</div>
-        <div className={"tab " + (tab === "myteams" ? "active" : "")} onClick={() => setTab("myteams")}>My Teams</div>
-        <div className={"tab " + (tab === "draft" ? "active" : "")} onClick={() => setTab("draft")}>Draft</div>
-        <div className={"tab " + (tab === "salary" ? "active" : "")} onClick={() => setTab("salary")}>Salary</div>
-        <div className={"tab " + (tab === "season" ? "active" : "")} onClick={() => setTab("season")}>In-Season</div>
-        <div className={"tab " + (tab === "waiver" ? "active" : "")} onClick={() => setTab("waiver")}>Waiver Wire</div>
-        <div className={"tab " + (tab === "trends" ? "active" : "")} onClick={() => setTab("trends")}>Trends</div>
-        <div className={"tab " + (tab === "reliability" ? "active" : "")} onClick={() => setTab("reliability")}>Reliability 🧪</div>
+        {NFL_TABS.map(t => (
+          <div key={t.id} className={"tab " + (tab === t.id ? "active" : "")} onClick={() => setTab(t.id)}>{t.label}</div>
+        ))}
       </div>
       <main>
-        {tab === "news" ? <div className="grid"><News /></div> :
-         tab === "myteams" ? <MyTeamsTab onSelectPlayer={setSelectedPlayerId} /> :
-         tab === "draft" ? <DraftTab /> :
-         tab === "salary" ? <SalaryTab /> :
-         tab === "season" ? <InSeasonTab /> :
-         tab === "waiver" ? <WaiverWireTab /> :
-         tab === "trends" ? <SentimentTrendTab /> : <ReliabilityTab />}
+        {tab === "board" ? <div className="grid"><FocusBoard /></div> :
+         tab === "news" ? <div className="grid"><News /></div> :
+         <InSeasonTab />}
       </main>
     </React.Fragment>
   );
