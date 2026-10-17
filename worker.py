@@ -59,6 +59,21 @@ MAX_BETTING_EPISODES_PER_RUN = 12
 EXTRACTION_TIMEOUT_SEC = int(os.getenv("EXTRACTION_TIMEOUT_SEC", "1200"))
 
 
+class _LazyModel:
+    """Single-process Whisper model, loaded only if the parallel transcriber fails and the
+    fallback path is needed. (The parallel transcriber loads its own shared model, and
+    preloading this one in every worker cost ~1 GB each against WSL's 8 GB limit.)"""
+
+    def __init__(self, **kwargs):
+        self._kwargs = kwargs
+        self._model = None
+
+    def transcribe(self, *args, **kwargs):
+        if self._model is None:
+            self._model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8", **self._kwargs)
+        return self._model.transcribe(*args, **kwargs)
+
+
 def download_audio(url: str, dest: Path):
     resp = requests.get(url, stream=True, timeout=120)
     resp.raise_for_status()
@@ -391,7 +406,7 @@ def run():
     # a live run: ~410% CPU, 64% idle overall). Raising it doesn't change
     # what gets transcribed or how - same model, same audio - so there's no
     # accuracy tradeoff, just more of the idle CPU put to use.
-    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8", cpu_threads=10)
+    model = _LazyModel(cpu_threads=6)
 
     done = 0
     for episode_id, title, audio_url, content_week, category in episodes:
